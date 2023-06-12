@@ -8,7 +8,7 @@ RUN go build -a -installsuffix cgo -o app .
 FROM scratch AS runtime
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build /go/src/app ./
-COPY media /
+COPY media /media
 #COPY .env ./
 #COPY pamela ./
 ENTRYPOINT ["./app"]
