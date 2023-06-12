@@ -21,9 +21,5 @@ jobs:
     - uses: actions/checkout@v3
     - name: Build the Docker image
       run: docker build . --file Dockerfile --tag bharatram1/dl:latest
-  push:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/push@v2
-        name: Push the Docker image
-        run: docker push bharatram1/dl:latest
+    - name: Push Docker
+      run: docker push bharatram1/dl:latest
