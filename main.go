@@ -136,6 +136,7 @@ func Dequeue() {
 		fmt.Println("No Jobs.. waiting "+interval+" minutes... current time ", time.Now())
 		time.Sleep(time.Minute * 5)
 		go Dequeue()
+		return
 	}
 
 	fmt.Println("Total number of Jobs queued: ", len(Jobs))
@@ -144,6 +145,7 @@ func Dequeue() {
 	go func() {
 		if err := job.StartDownload(); err != nil {
 			fmt.Println("error with job for " + job.Name + " going to retry again...")
+			fmt.Println("error was: ", err)
 			Jobs = append(Jobs, job)
 		}
 	}()
