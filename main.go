@@ -133,7 +133,7 @@ func HandleDownload(c *gin.Context) {
 
 func Dequeue() {
 	if len(Jobs) == 0 {
-		fmt.Println("No Jobs.. waiting " + interval + " minutes...")
+		fmt.Println("No Jobs.. waiting "+interval+" minutes... current time ", time.Now())
 		time.Sleep(time.Minute * 5)
 		go Dequeue()
 	}
