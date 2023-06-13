@@ -111,6 +111,7 @@ func (i *Item) MoveFile() error {
 	if i.Type == TVShow {
 		newLocation = TVShowPath
 	}
+	fmt.Println("Moving file to location ", newLocation+"/"+i.Name)
 	err := os.Rename(i.Name, newLocation+"/"+i.Name)
 	if err != nil {
 		return err
@@ -132,13 +133,17 @@ func HandleDownload(c *gin.Context) {
 
 func Dequeue() {
 	if len(Jobs) == 0 {
+		fmt.Println("No Jobs.. waiting " + interval + " minutes...")
 		time.Sleep(time.Minute * 5)
 		go Dequeue()
 	}
 
+	fmt.Println("Total number of Jobs queued: ", len(Jobs))
+
 	job := Jobs[0]
 	go func() {
 		if err := job.StartDownload(); err != nil {
+			fmt.Println("error with job for " + job.Name + " going to retry again...")
 			Jobs = append(Jobs, job)
 		}
 	}()
