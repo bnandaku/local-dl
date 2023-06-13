@@ -51,8 +51,13 @@ func main() {
 }
 
 func (i *Item) StartDownload() error {
+	destination := MoviesPath
+	if i.Type == TVShow {
+		destination = TVShowPath
+	}
+
 	var path bytes.Buffer
-	path.WriteString(i.Name)
+	path.WriteString(destination + "/" + i.Name)
 	start := time.Now()
 
 	out, err := os.Create(path.String())
@@ -101,7 +106,7 @@ func (i *Item) StartDownload() error {
 	elapsed := time.Since(start)
 	log.Printf("Download completed in %s for %s", elapsed, i.Name)
 
-	return i.MoveFile()
+	return nil
 
 }
 
