@@ -106,16 +106,42 @@ func (i *Item) StartDownload() error {
 }
 
 func (i *Item) MoveFile() error {
+	source := i.Name
 
-	newLocation := MoviesPath
-	if i.Type == TVShow {
-		newLocation = TVShowPath
-	}
-	fmt.Println("Moving file to location ", newLocation+"/"+i.Name)
-	err := os.Rename(i.Name, newLocation+"/"+i.Name)
+	src, err := os.Open(source)
 	if err != nil {
 		return err
 	}
+
+	destination := MoviesPath
+	if i.Type == TVShow {
+		destination = TVShowPath
+	}
+
+	destination = destination + "/" + i.Name
+
+	dst, err := os.Create(destination)
+	if err != nil {
+		src.Close()
+		return err
+	}
+	_, err = io.Copy(dst, src)
+	src.Close()
+	dst.Close()
+	if err != nil {
+		return err
+	}
+	fi, err := os.Stat(source)
+	if err != nil {
+		os.Remove(destination)
+		return err
+	}
+	err = os.Chmod(destination, fi.Mode())
+	if err != nil {
+		os.Remove(destination)
+		return err
+	}
+	os.Remove(source)
 	return nil
 }
 
