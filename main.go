@@ -17,23 +17,23 @@ var Jobs []*Item
 var MoviesPath string
 var TVShowPath string
 var PORT string
-var interval string
-var Interval int64
-var CurrentJobs []*Item
+
+// var Interval int64
+var CurrentJobs map[string]*Item
 
 func main() {
-	CurrentJobs = make([]*Item, 0)
+	CurrentJobs = make(map[string]*Item)
 	MoviesPath = os.Getenv("MOVIES_PATH")
 	TVShowPath = os.Getenv("TVSHOW_PATH")
 	PORT = os.Getenv("PORT")
-	interval = os.Getenv("INTERVAL")
-	inter, err := strconv.Atoi(interval)
-	if err != nil {
-		fmt.Println("Error converting interval to int")
-		os.Exit(80)
-	}
-
-	Interval = int64(inter)
+	//interval = os.Getenv("INTERVAL")
+	//inter, err := strconv.Atoi(interval)
+	//if err != nil {
+	//	fmt.Println("Error converting interval to int")
+	//	os.Exit(80)
+	//}
+	//
+	//Interval = int64(inter)
 
 	Jobs = make([]*Item, 0)
 	go Dequeue()
@@ -54,12 +54,7 @@ func main() {
 
 func (i *Item) StartDownload() error {
 	defer func() {
-		for j, job := range CurrentJobs {
-			if job.URL == i.URL {
-				CurrentJobs = remove(CurrentJobs, j)
-				break
-			}
-		}
+		delete(CurrentJobs, i.URL)
 	}()
 	destination := MoviesPath
 	if i.Type == TVShow {
@@ -133,20 +128,18 @@ func HandleDownload(c *gin.Context) {
 	strings.ReplaceAll(json.Name, " ", ".")
 
 	Jobs = append(Jobs, &json)
+	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("Added to Jobs. Current Queue Count %d", len(Jobs))})
 }
 
 func Dequeue() {
 	if len(Jobs) == 0 && len(CurrentJobs) <= 3 {
-		fmt.Println("No Jobs.. waiting "+interval+" minutes... current time ", time.Now())
-		time.Sleep(time.Minute * 5)
+		time.Sleep(time.Second * 30)
 		go Dequeue()
 		return
 	}
-
 	fmt.Println("Total number of Jobs queued: ", len(Jobs))
-
 	job := Jobs[0]
-	CurrentJobs = append(CurrentJobs, job)
+	CurrentJobs[job.URL] = job
 	go func() {
 		if err := job.StartDownload(); err != nil {
 			fmt.Println("error with job for " + job.Name + " going to retry again...")
@@ -156,7 +149,7 @@ func Dequeue() {
 	}()
 
 	Jobs = Jobs[1:]
-	time.Sleep(time.Minute * 5)
+	time.Sleep(time.Second * 30)
 	go Dequeue()
 }
 
@@ -242,7 +235,3 @@ const (
 	Anime  ContentType = "anime"
 	TVShow ContentType = "tvshow"
 )
-
-func remove(slice []*Item, s int) []*Item {
-	return append(slice[:s], slice[s+1:]...)
-}
