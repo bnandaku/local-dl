@@ -18,9 +18,10 @@ var TVShowPath string
 var PORT string
 var interval string
 var Interval int64
+var CurrentJobs []*Item
 
 func main() {
-
+	CurrentJobs = make([]*Item, 0)
 	MoviesPath = os.Getenv("MOVIES_PATH")
 	TVShowPath = os.Getenv("TVSHOW_PATH")
 	PORT = os.Getenv("PORT")
@@ -43,7 +44,7 @@ func main() {
 	})
 
 	r.POST("/dl", HandleDownload)
-
+	r.GET("/queue", Queue)
 	if err := r.Run(":" + PORT); err != nil {
 		fmt.Println(err)
 	}
@@ -51,6 +52,14 @@ func main() {
 }
 
 func (i *Item) StartDownload() error {
+	defer func() {
+		for j, job := range CurrentJobs {
+			if job.URL == i.URL {
+				CurrentJobs = remove(CurrentJobs, j)
+				break
+			}
+		}
+	}()
 	destination := MoviesPath
 	if i.Type == TVShow {
 		destination = TVShowPath
@@ -72,7 +81,7 @@ func (i *Item) StartDownload() error {
 	headResp, err := http.Head(i.URL)
 
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	defer headResp.Body.Close()
@@ -85,12 +94,12 @@ func (i *Item) StartDownload() error {
 
 	done := make(chan int64)
 
-	go PrintDownloadPercent(done, path.String(), int64(size))
+	go i.UpdateDownloadPercent(done, path.String(), int64(size))
 
 	resp, err := http.Get(i.URL)
 
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	defer resp.Body.Close()
@@ -110,46 +119,6 @@ func (i *Item) StartDownload() error {
 
 }
 
-func (i *Item) MoveFile() error {
-	source := i.Name
-
-	src, err := os.Open(source)
-	if err != nil {
-		return err
-	}
-
-	destination := MoviesPath
-	if i.Type == TVShow {
-		destination = TVShowPath
-	}
-
-	destination = destination + "/" + i.Name
-
-	dst, err := os.Create(destination)
-	if err != nil {
-		src.Close()
-		return err
-	}
-	_, err = io.Copy(dst, src)
-	src.Close()
-	dst.Close()
-	if err != nil {
-		return err
-	}
-	fi, err := os.Stat(source)
-	if err != nil {
-		os.Remove(destination)
-		return err
-	}
-	err = os.Chmod(destination, fi.Mode())
-	if err != nil {
-		os.Remove(destination)
-		return err
-	}
-	os.Remove(source)
-	return nil
-}
-
 func HandleDownload(c *gin.Context) {
 	var json Item
 	if err := c.BindJSON(&json); err != nil {
@@ -163,7 +132,7 @@ func HandleDownload(c *gin.Context) {
 }
 
 func Dequeue() {
-	if len(Jobs) == 0 {
+	if len(Jobs) == 0 && len(CurrentJobs) <= 3 {
 		fmt.Println("No Jobs.. waiting "+interval+" minutes... current time ", time.Now())
 		time.Sleep(time.Minute * 5)
 		go Dequeue()
@@ -173,6 +142,7 @@ func Dequeue() {
 	fmt.Println("Total number of Jobs queued: ", len(Jobs))
 
 	job := Jobs[0]
+	CurrentJobs = append(CurrentJobs, job)
 	go func() {
 		if err := job.StartDownload(); err != nil {
 			fmt.Println("error with job for " + job.Name + " going to retry again...")
@@ -186,7 +156,34 @@ func Dequeue() {
 	go Dequeue()
 }
 
-func PrintDownloadPercent(done chan int64, path string, total int64) {
+func Queue(c *gin.Context) {
+
+	totalJobs := len(Jobs) + len(CurrentJobs)
+
+	if totalJobs == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "no jobs in queue",
+		})
+	}
+
+	var JobQueue []string
+	for _, job := range Jobs {
+		JobQueue = append(JobQueue, job.Name)
+	}
+	var CurrentJobQueue []string
+	for _, job := range CurrentJobs {
+		CurrentJobQueue = append(CurrentJobQueue, job.Name+" - "+job.CompletedPercent+" completed")
+	}
+
+	resp := gin.H{
+		"totalJobs": totalJobs,
+		"queue":     JobQueue,
+		"working":   CurrentJobQueue,
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+func (i *Item) UpdateDownloadPercent(done chan int64, path string, total int64) {
 
 	var stop bool = false
 
@@ -213,23 +210,23 @@ func PrintDownloadPercent(done chan int64, path string, total int64) {
 			}
 
 			var percent = float64(size) / float64(total) * 100
-
-			fmt.Printf("%.0f", percent)
-			fmt.Println("% completed for " + path)
+			i.CompletedPercent = fmt.Sprintf("%.0f", percent)
 		}
 
 		if stop {
 			break
 		}
 
-		time.Sleep(time.Second * 60)
+		time.Sleep(time.Second)
 	}
 }
 
 type Item struct {
-	URL  string      `json:"url"`
-	Type ContentType `json:"type"`
-	Name string      `json:"name"`
+	URL              string      `json:"url"`
+	Type             ContentType `json:"type"`
+	Name             string      `json:"name"`
+	Started          bool        `json:"started"`
+	CompletedPercent string      `json:"completed"`
 }
 
 type ContentType string
@@ -239,3 +236,7 @@ const (
 	Anime  ContentType = "anime"
 	TVShow ContentType = "tvshow"
 )
+
+func remove(slice []*Item, s int) []*Item {
+	return append(slice[:s], slice[s+1:]...)
+}
