@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -128,6 +129,9 @@ func HandleDownload(c *gin.Context) {
 		fmt.Println(err)
 		return
 	}
+
+	strings.ReplaceAll(json.Name, " ", ".")
+
 	Jobs = append(Jobs, &json)
 }
 
