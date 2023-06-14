@@ -184,6 +184,7 @@ func Queue(c *gin.Context) {
 		"totalJobs": totalJobs,
 		"queue":     JobQueue,
 		"working":   CurrentJobQueue,
+		"message":   fmt.Sprintf("%d", totalJobs),
 	}
 	c.JSON(http.StatusOK, resp)
 }
