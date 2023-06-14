@@ -164,6 +164,7 @@ func Queue(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"message": "no jobs in queue",
 		})
+		return
 	}
 
 	var JobQueue []string
