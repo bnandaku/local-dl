@@ -111,7 +111,7 @@ func (i *Item) StartDownload() error {
 
 	elapsed := time.Since(start)
 	log.Printf("Download completed in %s for %s", elapsed, i.Name)
-
+	update(i.Name)
 	return nil
 
 }
