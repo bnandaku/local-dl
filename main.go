@@ -170,7 +170,7 @@ func Queue(c *gin.Context) {
 	}
 	var CurrentJobQueue []string
 	for _, job := range CurrentJobs {
-		CurrentJobQueue = append(CurrentJobQueue, job.Name+" - "+job.CompletedPercent+" completed")
+		CurrentJobQueue = append(CurrentJobQueue, job.Name+" - "+job.CompletedPercent+"% completed")
 	}
 
 	resp := gin.H{
