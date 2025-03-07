@@ -31,6 +31,7 @@ func main() {
 	PORT = os.Getenv("PORT")
 	Jobs = make([]*Item, 0)
 	go Dequeue()
+	go GetQueue()
 	r := gin.Default()
 	r.GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -205,6 +206,9 @@ func Queue(c *gin.Context) {
 }
 
 func GetQueue() {
+
+	fmt.Println("getting queue")
+
 	url := "putio.bramsoft.com/queue"
 	method := "POST"
 	client := &http.Client{}
