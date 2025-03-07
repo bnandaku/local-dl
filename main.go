@@ -140,7 +140,7 @@ func update(name string) {
 		// fmt.Println(err)
 		return
 	}
-	// fmt.Println(string(body))
+	fmt.Println(string(body))
 }
 
 func HandleDownload(c *gin.Context) {
