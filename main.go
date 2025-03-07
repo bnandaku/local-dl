@@ -2,11 +2,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"io"
 	"io/ioutil"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -27,15 +29,6 @@ func main() {
 	MoviesPath = os.Getenv("MOVIES_PATH")
 	TVShowPath = os.Getenv("TVSHOW_PATH")
 	PORT = os.Getenv("PORT")
-	//interval = os.Getenv("INTERVAL")
-	//inter, err := strconv.Atoi(interval)
-	//if err != nil {
-	//	fmt.Println("Error converting interval to int")
-	//	os.Exit(80)
-	//}
-	//
-	//Interval = int64(inter)
-
 	Jobs = make([]*Item, 0)
 	go Dequeue()
 	r := gin.Default()
@@ -45,8 +38,6 @@ func main() {
 		})
 	})
 
-	r.POST("/dl", HandleDownload)
-	r.GET("/queue", Queue)
 	if err := r.Run(":" + PORT); err != nil {
 		fmt.Println(err)
 	}
@@ -213,6 +204,39 @@ func Queue(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+func GetQueue() {
+	url := "putio.bramsoft.com/queue"
+	method := "POST"
+	client := &http.Client{}
+	req, err := http.NewRequest(method, url, nil)
+
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	var items []*Item
+
+	if err := json.Unmarshal(body, &items); err != nil {
+		fmt.Println(err)
+	}
+	Jobs = append(Jobs, items...)
+	time.Sleep(time.Minute * 5)
+	GetQueue()
+}
+
 func (i *Item) UpdateDownloadPercent(done chan int64, path string, total int64) {
 
 	var stop bool = false
@@ -240,6 +264,9 @@ func (i *Item) UpdateDownloadPercent(done chan int64, path string, total int64) 
 			}
 
 			var percent = float64(size) / float64(total) * 100
+			if math.Mod(percent, 5) == 0 {
+				UpdateQueue(i)
+			}
 			i.CompletedPercent = fmt.Sprintf("%.0f", percent)
 		}
 
@@ -251,12 +278,44 @@ func (i *Item) UpdateDownloadPercent(done chan int64, path string, total int64) 
 	}
 }
 
+func UpdateQueue(item *Item) {
+	url := "putio.bramsoft.com/updateQueue"
+	method := "POST"
+
+	arr, _ := json.Marshal(item)
+	payload := bytes.NewReader(arr)
+	client := &http.Client{}
+	req, err := http.NewRequest(method, url, payload)
+
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	req.Header.Add("Content-Type", "application/json")
+
+	res, err := client.Do(req)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(string(body))
+}
+
 type Item struct {
 	URL              string      `json:"url"`
 	Type             ContentType `json:"type"`
 	Name             string      `json:"name"`
+	FileId           int64       `json:"file_id"`
 	Started          bool        `json:"started"`
-	CompletedPercent string      `json:"completed"`
+	CompletedPercent string      `json:"completed_percent"`
+	Completed        bool        `json:"completed"`
 }
 
 type ContentType string
