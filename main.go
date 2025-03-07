@@ -20,6 +20,7 @@ var Jobs []*Item
 var MoviesPath string
 var TVShowPath string
 var PORT string
+var JobMap map[int64]*Item
 
 // var Interval int64
 var CurrentJobs map[string]*Item
@@ -30,6 +31,7 @@ func main() {
 	TVShowPath = os.Getenv("TVSHOW_PATH")
 	PORT = os.Getenv("PORT")
 	Jobs = make([]*Item, 0)
+	JobMap = make(map[int64]*Item)
 	go Dequeue()
 	go GetQueue()
 	r := gin.Default()
@@ -236,7 +238,12 @@ func GetQueue() {
 	if err := json.Unmarshal(body, &items); err != nil {
 		fmt.Println(err)
 	}
+
 	Jobs = append(Jobs, items...)
+	for _, item := range items {
+		item.InQueue = true
+		UpdateQueue(item)
+	}
 	time.Sleep(time.Minute * 5)
 	GetQueue()
 }
@@ -320,6 +327,7 @@ type Item struct {
 	Started          bool        `json:"started"`
 	CompletedPercent string      `json:"completed_percent"`
 	Completed        bool        `json:"completed"`
+	InQueue          bool        `json:"in_queue"`
 }
 
 type ContentType string
