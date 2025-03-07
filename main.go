@@ -42,7 +42,7 @@ func main() {
 	})
 
 	if err := r.Run(":" + PORT); err != nil {
-		fmt.Println(err)
+		// fmt.Println(err)
 	}
 
 }
@@ -64,7 +64,7 @@ func (i *Item) StartDownload() error {
 	out, err := os.Create(path.String())
 
 	if err != nil {
-		fmt.Println(path.String())
+		// fmt.Println(path.String())
 		return err
 	}
 
@@ -123,24 +123,24 @@ func update(name string) {
 	req, err := http.NewRequest(method, url, payload)
 
 	if err != nil {
-		fmt.Println(err)
+		// fmt.Println(err)
 		return
 	}
 	req.Header.Add("Content-Type", "application/json")
 
 	res, err := client.Do(req)
 	if err != nil {
-		fmt.Println(err)
+		// fmt.Println(err)
 		return
 	}
 	defer res.Body.Close()
 
 	body, err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		fmt.Println(err)
+		// fmt.Println(err)
 		return
 	}
-	fmt.Println(string(body))
+	// fmt.Println(string(body))
 }
 
 func HandleDownload(c *gin.Context) {
@@ -149,7 +149,7 @@ func HandleDownload(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "unable to bind JSON",
 		})
-		fmt.Println(err)
+		// fmt.Println(err)
 		return
 	}
 
@@ -165,13 +165,13 @@ func Dequeue() {
 		go Dequeue()
 		return
 	}
-	fmt.Println("Total number of Jobs queued: ", len(Jobs))
+	// fmt.Println("Total number of Jobs queued: ", len(Jobs))
 	job := Jobs[0]
 	CurrentJobs[job.URL] = job
 	go func() {
 		if err := job.StartDownload(); err != nil {
-			fmt.Println("error with job for " + job.Name + " going to retry again...")
-			fmt.Println("error was: ", err)
+			// fmt.Println("error with job for " + job.Name + " going to retry again...")
+			// fmt.Println("error was: ", err)
 			Jobs = append(Jobs, job)
 		}
 	}()
@@ -212,7 +212,7 @@ func Queue(c *gin.Context) {
 
 func GetQueue() {
 
-	fmt.Println("getting queue")
+	// fmt.Println("getting queue")
 
 	url := "https://putio.bramsoft.com/queue"
 	method := "POST"
@@ -220,26 +220,26 @@ func GetQueue() {
 	req, err := http.NewRequest(method, url, nil)
 
 	if err != nil {
-		fmt.Println(err)
+		// fmt.Println(err)
 		return
 	}
 	res, err := client.Do(req)
 	if err != nil {
-		fmt.Println(err)
+		// fmt.Println(err)
 		return
 	}
 	defer res.Body.Close()
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		fmt.Println(err)
+		// fmt.Println(err)
 		return
 	}
 
 	var items []*Item
 
 	if err := json.Unmarshal(body, &items); err != nil {
-		fmt.Println(err)
+		// fmt.Println(err)
 	}
 
 	Jobs = append(Jobs, items...)
@@ -278,7 +278,7 @@ func (i *Item) UpdateDownloadPercent(done chan int64, path string, total int64) 
 			}
 
 			var percent = float64(size) / float64(total) * 100
-			fmt.Println(i.Name, percent, math.Mod(percent, 5))
+			// fmt.Println(i.Name, percent, math.Mod(percent, 5))
 			i.CompletedPercent = fmt.Sprintf("%.0f", percent)
 			if math.Mod(percent, 5) < 1 {
 				UpdateQueue(i)
@@ -303,21 +303,21 @@ func UpdateQueue(item *Item) {
 	req, err := http.NewRequest(method, url, payload)
 
 	if err != nil {
-		fmt.Println(err)
+		// fmt.Println(err)
 		return
 	}
 	req.Header.Add("Content-Type", "application/json")
 
 	res, err := client.Do(req)
 	if err != nil {
-		fmt.Println(err)
+		// fmt.Println(err)
 		return
 	}
 	defer res.Body.Close()
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		fmt.Println(err)
+		// fmt.Println(err)
 		return
 	}
 	fmt.Println(string(body))
