@@ -51,6 +51,7 @@ func (i *Item) StartDownload() error {
 	defer func() {
 		delete(CurrentJobs, i.URL)
 	}()
+	i.Started = true
 	destination := MoviesPath
 	if i.Type == TVShow {
 		destination = TVShowPath
@@ -278,10 +279,10 @@ func (i *Item) UpdateDownloadPercent(done chan int64, path string, total int64) 
 
 			var percent = float64(size) / float64(total) * 100
 			fmt.Println(i.Name, percent, math.Mod(percent, 5))
-			if math.Mod(percent, 5) == 0 {
+			i.CompletedPercent = fmt.Sprintf("%.0f", percent)
+			if math.Mod(percent, 5) < 1 {
 				UpdateQueue(i)
 			}
-			i.CompletedPercent = fmt.Sprintf("%.0f", percent)
 		}
 
 		if stop {
