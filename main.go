@@ -211,7 +211,7 @@ func GetQueue() {
 
 	fmt.Println("getting queue")
 
-	url := "putio.bramsoft.com/queue"
+	url := "https://putio.bramsoft.com/queue"
 	method := "POST"
 	client := &http.Client{}
 	req, err := http.NewRequest(method, url, nil)
@@ -290,7 +290,7 @@ func (i *Item) UpdateDownloadPercent(done chan int64, path string, total int64) 
 }
 
 func UpdateQueue(item *Item) {
-	url := "putio.bramsoft.com/updateQueue"
+	url := "https://putio.bramsoft.com/updateQueue"
 	method := "POST"
 
 	arr, _ := json.Marshal(item)
