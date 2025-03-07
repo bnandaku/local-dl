@@ -245,7 +245,7 @@ func GetQueue() {
 		UpdateQueue(item)
 	}
 	time.Sleep(time.Minute * 5)
-	GetQueue()
+	go GetQueue()
 }
 
 func (i *Item) UpdateDownloadPercent(done chan int64, path string, total int64) {
