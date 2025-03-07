@@ -106,6 +106,8 @@ func (i *Item) StartDownload() error {
 	elapsed := time.Since(start)
 	log.Printf("Download completed in %s for %s", elapsed, i.Name)
 	update(i.Name)
+	i.Completed = true
+	UpdateQueue(i)
 	return nil
 
 }
@@ -275,6 +277,7 @@ func (i *Item) UpdateDownloadPercent(done chan int64, path string, total int64) 
 			}
 
 			var percent = float64(size) / float64(total) * 100
+			fmt.Println(i.Name, percent, math.Mod(percent, 5))
 			if math.Mod(percent, 5) == 0 {
 				UpdateQueue(i)
 			}
