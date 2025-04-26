@@ -160,7 +160,7 @@ func HandleDownload(c *gin.Context) {
 }
 
 func Dequeue() {
-	if len(Jobs) == 0 || len(CurrentJobs) > 3 {
+	if len(Jobs) == 0 || len(CurrentJobs) > 8 {
 		time.Sleep(time.Second * 30)
 		go Dequeue()
 		return
