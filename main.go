@@ -160,12 +160,12 @@ func HandleDownload(c *gin.Context) {
 }
 
 func Dequeue() {
-	if len(Jobs) == 0 || len(CurrentJobs) > 5 {
+	if len(Jobs) == 0 || len(CurrentJobs) > 3 {
 		time.Sleep(time.Second * 30)
 		go Dequeue()
 		return
 	}
-	//fmt.Println("Total number of Jobs queued: ", len(Jobs))
+	// fmt.Println("Total number of Jobs queued: ", len(Jobs))
 	job := Jobs[0]
 	CurrentJobs[job.URL] = job
 	go func() {
@@ -213,7 +213,7 @@ func Queue(c *gin.Context) {
 func GetQueue() {
 
 	// fmt.Println("getting queue")
-	fmt.Println("Getting Queue Count ")
+
 	url := "https://putio.bramsoft.com/queue"
 	method := "POST"
 	client := &http.Client{}
