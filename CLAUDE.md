@@ -74,6 +74,13 @@ The catalog system automatically tracks all TV show files in a SQLite database:
 - **Mutex-protected** to prevent concurrent syncs
 - Non-blocking background operation
 
+**Bidirectional Status Communication:**
+- local-dl polls `/queue` endpoint every 5 minutes
+- putio-go-server includes `catalog_status` in `/queue` response
+- If `needs_resync` flag is set, local-dl triggers immediate catalog sync
+- Discord command `!resync` sets the flag
+- Flag auto-clears after successful catalog update
+
 **Database Schema (tvshows_catalog.db):**
 ```sql
 -- Files table: All TV show files
@@ -123,10 +130,13 @@ CREATE TABLE catalog_events (
 ├─────────────────────────────────────────────────────────────────┤
 │ 1. Download completes → AddFileToCatalog()                      │
 │    ├─ Updates tvshows_catalog.db                                │
-│    └─ Triggers SendCatalogUpdate() immediately                  │
+│    └─ Triggers DebouncedCatalogSync() (10s delay)               │
 │                                                                  │
 │ 2. Every 5 minutes (with GetQueue poll)                         │
-│    └─ Triggers SendCatalogUpdate()                              │
+│    ├─ Polls https://putio.bramsoft.com/queue                    │
+│    ├─ Receives: {items: [...], catalog_status: {...}}           │
+│    ├─ Checks catalog_status.needs_resync flag                   │
+│    └─ If true: Triggers immediate SendCatalogUpdate()           │
 │                                                                  │
 │ SendCatalogUpdate() sends:                                      │
 │    ├─ Statistics (total shows, episodes, size)                  │
@@ -142,13 +152,21 @@ CREATE TABLE catalog_events (
 │ Receives catalog update → UpdateCatalog()                       │
 │    ├─ Stores in library_catalog.db                              │
 │    ├─ Replaces all data (transaction-based)                     │
+│    ├─ Clears needs_resync flag                                  │
 │    └─ Ready for Discord queries                                 │
 │                                                                  │
 │ Discord Commands:                                               │
 │    ├─ !library  → Query library_catalog.db                      │
 │    ├─ !shows    → Query library_catalog.db                      │
 │    ├─ !show X   → Query library_catalog.db                      │
-│    └─ !recent   → Query library_catalog.db                      │
+│    ├─ !recent   → Query library_catalog.db                      │
+│    └─ !resync   → Sets needs_resync flag (polled by local-dl)   │
+│                                                                  │
+│ GET /queue response includes catalog status:                    │
+│    ├─ needs_resync: true/false                                  │
+│    ├─ resync_reason: "user_requested" / etc.                    │
+│    ├─ show_count, episode_count                                 │
+│    └─ last_updated timestamp                                    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -308,6 +326,7 @@ All commands use configured prefix (e.g., `%plex <link>`):
 - `shows` - List all TV shows in your library (up to 50)
 - `show <name>` - Show all episodes for a specific show (e.g., `!show The Flash`)
 - `recent` - Show 10 most recently added episodes
+- `resync` - Request immediate catalog resync from local-dl (triggers on next poll within 5 minutes)
 
 **Note:** Library commands accept natural names with spaces. Examples:
 - `!show The Flash` ✓
