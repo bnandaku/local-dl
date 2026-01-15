@@ -69,7 +69,9 @@ The catalog system automatically tracks all TV show files in a SQLite database:
 - Sends catalog to `https://putio.bramsoft.com/catalogUpdate`
 - Includes: all shows, seasons, episodes, statistics, recent additions
 - Syncs every 5 minutes (with queue polling)
-- Immediate sync when new files are added
+- **Debounced sync** when new files are added (10 second delay to batch changes)
+- Single sync after initial scan completes (prevents overwhelming server)
+- **Mutex-protected** to prevent concurrent syncs
 - Non-blocking background operation
 
 **Database Schema (tvshows_catalog.db):**
@@ -682,6 +684,25 @@ rm ./library_catalog.db
 curl -X POST https://putio.bramsoft.com/catalogUpdate \
   -H "Content-Type: application/json" \
   -d '{"timestamp":"2025-01-15T00:00:00Z","statistics":{"total_shows":0,"total_episodes":0,"total_size_gb":0,"total_size_bytes":0},"shows":[],"recent":[]}'
+```
+
+**Problem:** putio-go-server overwhelmed with 500 errors on `/catalogUpdate`
+```bash
+# This happens when local-dl restarts and scans many episodes at once
+# Symptoms: 100+ concurrent POST /catalogUpdate requests, 15+ second response times
+
+# The fix (already implemented):
+# - Catalog sync is debounced (10 second delay to batch changes)
+# - Mutex prevents concurrent syncs
+# - Initial scan doesn't trigger immediate syncs
+# - One sync sent after initial scan completes
+
+# To resolve:
+# 1. Wait for local-dl initial scan to complete
+# 2. Wait for the single catalog update to finish
+# 3. Server will recover automatically
+
+# If server is stuck, restart putio-go-server to clear pending requests
 ```
 
 ### Build Issues
