@@ -50,11 +50,14 @@ const (
 
 // TVShowInfo holds parsed information about a TV show episode
 type TVShowInfo struct {
-	ShowName      string
-	Season        string
-	Episode       string
-	OriginalName  string
-	HasSeasonInfo bool
+	ShowName       string
+	Season         string
+	Episode        string
+	OriginalName   string
+	QualityInfo    string // Everything after the episode number (resolution, codec, etc.)
+	Extension      string
+	HasSeasonInfo  bool
+	StandardName   string // Standardized filename: ShowName.SXXEXX.quality.ext
 }
 
 func logMessage(level, component, message string, args ...interface{}) {
@@ -145,9 +148,35 @@ func parseTVShowInfo(filename string) TVShowInfo {
 		episodeNum = "0" + episodeNum
 	}
 
+	// Extract quality info (everything after the episode pattern)
+	qualityInfo := ""
+	extension := filepath.Ext(filename)
+	filenameWithoutExt := strings.TrimSuffix(filename, extension)
+
+	// Find where the episode pattern ends
+	if matches != nil && len(matches) > 1 {
+		afterPattern := filenameWithoutExt[matches[1]:]
+		// Clean up quality info
+		afterPattern = strings.TrimPrefix(afterPattern, ".")
+		afterPattern = strings.TrimPrefix(afterPattern, "-")
+		afterPattern = strings.TrimPrefix(afterPattern, " ")
+		afterPattern = strings.Trim(afterPattern, ".")
+		qualityInfo = afterPattern
+	}
+
+	// Build standardized filename: ShowName.SXXEXX[.quality].ext
+	standardName := showName + ".S" + seasonNum + "E" + episodeNum
+	if qualityInfo != "" {
+		standardName += "." + qualityInfo
+	}
+	standardName += extension
+
 	info.ShowName = showName
 	info.Season = seasonNum
 	info.Episode = episodeNum
+	info.QualityInfo = qualityInfo
+	info.Extension = extension
+	info.StandardName = standardName
 	info.HasSeasonInfo = true
 
 	return info
@@ -227,6 +256,8 @@ func (i *Item) StartDownload() error {
 
 	// Determine base destination
 	destination := MoviesPath
+	filename := i.Name // Default to original name
+
 	if i.Type == TVShow {
 		destination = TVShowPath
 
@@ -235,6 +266,10 @@ func (i *Item) StartDownload() error {
 		if tvInfo.HasSeasonInfo {
 			logMessage(LogLevelInfo, "Download", "Parsed TV show: %s - Season %s Episode %s",
 				tvInfo.ShowName, tvInfo.Season, tvInfo.Episode)
+
+			// Use standardized filename
+			filename = tvInfo.StandardName
+			logMessage(LogLevelInfo, "Download", "Standardizing filename: %s -> %s", i.Name, filename)
 
 			// Build the proper path with show name and season folders
 			seasonPath, err := buildTVShowPath(destination, tvInfo)
@@ -248,8 +283,8 @@ func (i *Item) StartDownload() error {
 		}
 	}
 
-	// Build full file path
-	fullPath := filepath.Join(destination, i.Name)
+	// Build full file path with standardized filename
+	fullPath := filepath.Join(destination, filename)
 	logMessage(LogLevelDebug, "Download", "Destination path: %s", fullPath)
 
 	start := time.Now()
@@ -302,9 +337,9 @@ func (i *Item) StartDownload() error {
 	elapsed := time.Since(start)
 	speedMBps := sizeMB / elapsed.Seconds()
 	logMessage(LogLevelInfo, "Download", "✓ Completed: %s | Size: %.2f MB | Time: %s | Speed: %.2f MB/s",
-		i.Name, sizeMB, elapsed.Round(time.Second), speedMBps)
+		filename, sizeMB, elapsed.Round(time.Second), speedMBps)
 
-	update(i.Name)
+	update(filename)
 	i.Completed = true
 	UpdateQueue(i)
 	return nil
