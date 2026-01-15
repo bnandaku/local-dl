@@ -632,6 +632,15 @@ func GetQueue(ctx context.Context) {
 		// Reset backoff on success
 		retryDelay = initialBackoff
 
+		// Send catalog update (every 5 minutes with queue poll)
+		if CatalogDB != nil {
+			go func() {
+				if err := SendCatalogUpdate(); err != nil {
+					logMessage(LogLevelWarn, "CatalogSync", "Failed to send catalog update: %v", err)
+				}
+			}()
+		}
+
 		// Wait for next poll or context cancellation
 		select {
 		case <-ctx.Done():

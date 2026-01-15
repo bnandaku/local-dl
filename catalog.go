@@ -134,6 +134,14 @@ func AddFileToCatalog(filePath string) error {
 		logCatalogEvent("added", filePath, tvInfo.ShowName, tvInfo.Season, tvInfo.Episode, "")
 
 		logMessage(LogLevelInfo, "Catalog", "Added: %s (Show: %s S%sE%s)", filename, tvInfo.ShowName, tvInfo.Season, tvInfo.Episode)
+
+		// Send catalog update when new file is added
+		go func() {
+			if err := SendCatalogUpdate(); err != nil {
+				logMessage(LogLevelWarn, "CatalogSync", "Failed to send catalog update: %v", err)
+			}
+		}()
+
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("failed to check existing file: %w", err)

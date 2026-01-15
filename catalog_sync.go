@@ -1,0 +1,195 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
+)
+
+// CatalogSyncData represents the complete catalog data to send to putio-go-server
+type CatalogSyncData struct {
+	Timestamp  time.Time              `json:"timestamp"`
+	Statistics CatalogStatistics      `json:"statistics"`
+	Shows      []ShowData             `json:"shows"`
+	Recent     []RecentEpisode        `json:"recent"`
+}
+
+// CatalogStatistics holds overall catalog statistics
+type CatalogStatistics struct {
+	TotalShows    int     `json:"total_shows"`
+	TotalEpisodes int     `json:"total_episodes"`
+	TotalSizeGB   float64 `json:"total_size_gb"`
+	TotalSizeBytes int64  `json:"total_size_bytes"`
+}
+
+// ShowData represents a TV show with all its seasons and episodes
+type ShowData struct {
+	ShowName string       `json:"show_name"`
+	Seasons  []SeasonData `json:"seasons"`
+}
+
+// SeasonData represents a season with all its episodes
+type SeasonData struct {
+	Season   string        `json:"season"`
+	Episodes []EpisodeData `json:"episodes"`
+}
+
+// EpisodeData represents a single episode
+type EpisodeData struct {
+	Episode    string `json:"episode"`
+	Filename   string `json:"filename"`
+	FilePath   string `json:"file_path"`
+	FileSize   int64  `json:"file_size"`
+	ModifiedAt string `json:"modified_at"`
+}
+
+// RecentEpisode represents a recently added episode
+type RecentEpisode struct {
+	ShowName      string `json:"show_name"`
+	Season        string `json:"season"`
+	Episode       string `json:"episode"`
+	Filename      string `json:"filename"`
+	AddedToCatalog string `json:"added_to_catalog"`
+}
+
+// GetCatalogSyncData retrieves all catalog data for syncing
+func GetCatalogSyncData() (*CatalogSyncData, error) {
+	if CatalogDB == nil {
+		return nil, fmt.Errorf("catalog database not initialized")
+	}
+
+	data := &CatalogSyncData{
+		Timestamp: time.Now(),
+	}
+
+	// Get statistics
+	stats, err := GetCatalogStats()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get statistics: %w", err)
+	}
+
+	data.Statistics = CatalogStatistics{
+		TotalShows:     stats["total_shows"].(int),
+		TotalEpisodes:  stats["active_files"].(int),
+		TotalSizeGB:    stats["total_size_gb"].(float64),
+		TotalSizeBytes: stats["total_size_bytes"].(int64),
+	}
+
+	// Get all shows with seasons and episodes
+	shows := make(map[string]map[string][]EpisodeData)
+
+	rows, err := CatalogDB.Query(`
+		SELECT show_name, season, episode, filename, file_path, file_size, modified_at
+		FROM files
+		WHERE status = 'active'
+		ORDER BY show_name, season, episode
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query catalog: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var showName, season, episode, filename, filePath, modifiedAt string
+		var fileSize int64
+
+		if err := rows.Scan(&showName, &season, &episode, &filename, &filePath, &fileSize, &modifiedAt); err != nil {
+			continue
+		}
+
+		if shows[showName] == nil {
+			shows[showName] = make(map[string][]EpisodeData)
+		}
+
+		shows[showName][season] = append(shows[showName][season], EpisodeData{
+			Episode:    episode,
+			Filename:   filename,
+			FilePath:   filePath,
+			FileSize:   fileSize,
+			ModifiedAt: modifiedAt,
+		})
+	}
+
+	// Convert to slice structure
+	for showName, seasons := range shows {
+		showData := ShowData{
+			ShowName: showName,
+			Seasons:  []SeasonData{},
+		}
+
+		for season, episodes := range seasons {
+			showData.Seasons = append(showData.Seasons, SeasonData{
+				Season:   season,
+				Episodes: episodes,
+			})
+		}
+
+		data.Shows = append(data.Shows, showData)
+	}
+
+	// Get recent additions (last 50)
+	recentRows, err := CatalogDB.Query(`
+		SELECT show_name, season, episode, filename, added_to_catalog
+		FROM files
+		WHERE status = 'active'
+		ORDER BY added_to_catalog DESC
+		LIMIT 50
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query recent: %w", err)
+	}
+	defer recentRows.Close()
+
+	for recentRows.Next() {
+		var recent RecentEpisode
+		if err := recentRows.Scan(&recent.ShowName, &recent.Season, &recent.Episode, &recent.Filename, &recent.AddedToCatalog); err != nil {
+			continue
+		}
+		data.Recent = append(data.Recent, recent)
+	}
+
+	return data, nil
+}
+
+// SendCatalogUpdate sends the catalog data to putio-go-server
+func SendCatalogUpdate() error {
+	url := "https://putio.bramsoft.com/catalogUpdate"
+
+	// Get catalog data
+	data, err := GetCatalogSyncData()
+	if err != nil {
+		return fmt.Errorf("failed to get catalog data: %w", err)
+	}
+
+	// Convert to JSON
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("failed to marshal JSON: %w", err)
+	}
+
+	// Send POST request
+	client := &http.Client{Timeout: 30 * time.Second}
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server returned status: %d", resp.StatusCode)
+	}
+
+	logMessage(LogLevelInfo, "CatalogSync", "Catalog update sent successfully (%d shows, %d episodes)",
+		len(data.Shows), data.Statistics.TotalEpisodes)
+
+	return nil
+}
