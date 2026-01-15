@@ -30,8 +30,15 @@ var CurrentJobs map[string]*Item
 var JobsMutex sync.Mutex
 var CurrentJobsMutex sync.Mutex
 
-// Regex pattern to match season and episode (e.g., S01E02, s01e02, S1E1)
+// Regex patterns to match season and episode
+// Pattern 1: S01E02, s01e02, S1E1
 var tvShowPattern = regexp.MustCompile(`(?i)s(\d{1,2})e(\d{1,2})`)
+
+// Pattern 2: Season 02 - 01, season 2 - 1
+var tvShowPatternSpelled = regexp.MustCompile(`(?i)season\s+(\d{1,2})\s*-\s*(\d{1,3})`)
+
+// Pattern 3: Just " - 01" (implies Season 01)
+var tvShowPatternSimple = regexp.MustCompile(`\s-\s+(\d{1,3})(?:\D|$)`)
 
 // Logger levels
 const (
@@ -56,26 +63,67 @@ func logMessage(level, component, message string, args ...interface{}) {
 	log.Printf("[%s] [%s] [%s] %s", timestamp, level, component, formattedMsg)
 }
 
+// toTitleCase converts underscore_separated_string to Title_Case
+// Example: "the_last_of_us" -> "The_Last_Of_Us"
+func toTitleCase(s string) string {
+	words := strings.Split(s, "_")
+	for i, word := range words {
+		if len(word) > 0 {
+			// Capitalize first letter, lowercase the rest
+			words[i] = strings.ToUpper(word[:1]) + strings.ToLower(word[1:])
+		}
+	}
+	return strings.Join(words, "_")
+}
+
 // parseTVShowInfo extracts show name, season, and episode from filename
-// Example: "The.Flash.S01E02.720p.mkv" -> ShowName: "The Flash", Season: "01", Episode: "02"
+// Supports multiple formats:
+//   - S01E02, s01e02 -> Season 01, Episode 02
+//   - Season 02 - 01 -> Season 02, Episode 01
+//   - Show Name - 01 -> Season 01, Episode 01
 func parseTVShowInfo(filename string) TVShowInfo {
 	info := TVShowInfo{
 		OriginalName:  filename,
 		HasSeasonInfo: false,
 	}
 
-	// Find season/episode pattern
-	matches := tvShowPattern.FindStringSubmatchIndex(filename)
-	if matches == nil {
-		// No season info found
-		return info
+	var matches []int
+	var showNameRaw string
+	var seasonNum, episodeNum string
+
+	// Try Pattern 1: S01E02
+	matches = tvShowPattern.FindStringSubmatchIndex(filename)
+	if matches != nil {
+		showNameRaw = filename[:matches[0]]
+		seasonNum = filename[matches[2]:matches[3]]
+		episodeNum = filename[matches[4]:matches[5]]
+	} else {
+		// Try Pattern 2: Season 02 - 01
+		matches = tvShowPatternSpelled.FindStringSubmatchIndex(filename)
+		if matches != nil {
+			showNameRaw = filename[:matches[0]]
+			seasonNum = filename[matches[2]:matches[3]]
+			episodeNum = filename[matches[4]:matches[5]]
+		} else {
+			// Try Pattern 3: - 01 (implies Season 01)
+			matches = tvShowPatternSimple.FindStringSubmatchIndex(filename)
+			if matches != nil {
+				showNameRaw = filename[:matches[0]]
+				seasonNum = "01"
+				episodeNum = filename[matches[2]:matches[3]]
+			} else {
+				// No season info found
+				return info
+			}
+		}
 	}
 
-	// Extract show name (everything before SxxExx pattern)
-	showNameRaw := filename[:matches[0]]
 	// Clean up the show name: replace dots and spaces with underscores, trim
 	showName := strings.ReplaceAll(showNameRaw, ".", "_")
 	showName = strings.ReplaceAll(showName, " ", "_")
+	// Remove square brackets (common in anime releases: [Fansub] Show Name)
+	showName = strings.ReplaceAll(showName, "[", "")
+	showName = strings.ReplaceAll(showName, "]", "")
 	showName = strings.Trim(showName, "_")
 	// Remove trailing hyphens
 	showName = strings.Trim(showName, "-")
@@ -84,16 +132,14 @@ func parseTVShowInfo(filename string) TVShowInfo {
 	for strings.Contains(showName, "__") {
 		showName = strings.ReplaceAll(showName, "__", "_")
 	}
+	// Normalize to Title Case to prevent duplicates like "the_bear" vs "The_Bear"
+	showName = toTitleCase(showName)
 
-	// Extract season number (first capture group)
-	seasonNum := filename[matches[2]:matches[3]]
 	// Pad season number to 2 digits if needed
 	if len(seasonNum) == 1 {
 		seasonNum = "0" + seasonNum
 	}
 
-	// Extract episode number (second capture group)
-	episodeNum := filename[matches[4]:matches[5]]
 	// Pad episode number to 2 digits if needed
 	if len(episodeNum) == 1 {
 		episodeNum = "0" + episodeNum
