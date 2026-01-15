@@ -601,12 +601,27 @@ func GetQueue(ctx context.Context) {
 			continue
 		}
 
-		var items []*Item
-		if err := json.Unmarshal(body, &items); err != nil {
-			logMessage(LogLevelError, "QueuePoller", "Failed to parse queue items: %v (retry in %s)", err, retryDelay)
+		// Parse response with catalog status
+		var response QueueResponse
+		if err := json.Unmarshal(body, &response); err != nil {
+			logMessage(LogLevelError, "QueuePoller", "Failed to parse queue response: %v (retry in %s)", err, retryDelay)
 			time.Sleep(retryDelay)
 			retryDelay = min(retryDelay*2, maxBackoff)
 			continue
+		}
+
+		items := response.Items
+
+		// Check if catalog resync is requested
+		if response.CatalogStatus.NeedsResync {
+			logMessage(LogLevelInfo, "CatalogSync", "Resync requested by server: %s", response.CatalogStatus.ResyncReason)
+			go func() {
+				if err := SendCatalogUpdate(); err != nil {
+					logMessage(LogLevelWarn, "CatalogSync", "Failed to send catalog update: %v", err)
+				} else {
+					logMessage(LogLevelInfo, "CatalogSync", "Catalog resync completed successfully")
+				}
+			}()
 		}
 
 		// Check queue size limit
@@ -759,6 +774,21 @@ type Item struct {
 	CompletedPercent string      `json:"completed_percent"`
 	Completed        bool        `json:"completed"`
 	InQueue          bool        `json:"in_queue"`
+}
+
+// QueueResponse represents the response from /queue endpoint with catalog status
+type QueueResponse struct {
+	Items         []*Item       `json:"items"`
+	CatalogStatus CatalogStatus `json:"catalog_status"`
+}
+
+// CatalogStatus holds catalog sync status from putio-go-server
+type CatalogStatus struct {
+	NeedsResync  bool   `json:"needs_resync"`
+	ResyncReason string `json:"resync_reason,omitempty"`
+	LastUpdated  string `json:"last_updated"`
+	ShowCount    int    `json:"show_count"`
+	EpisodeCount int    `json:"episode_count"`
 }
 
 type ContentType string
