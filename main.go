@@ -40,6 +40,9 @@ var tvShowPatternSpelled = regexp.MustCompile(`(?i)season\s+(\d{1,2})\s*-\s*(\d{
 // Pattern 3: Just " - 01" (implies Season 01)
 var tvShowPatternSimple = regexp.MustCompile(`\s-\s+(\d{1,3})(?:\D|$)`)
 
+// Pattern to match square brackets and their content (e.g., [Fansub], [1080p])
+var squareBracketsPattern = regexp.MustCompile(`\[[^\]]*\]`)
+
 // Logger levels
 const (
 	LogLevelInfo  = "INFO"
@@ -121,12 +124,11 @@ func parseTVShowInfo(filename string) TVShowInfo {
 		}
 	}
 
+	// Remove square brackets and their content (common in anime releases: [Fansub] Show Name)
+	showName := squareBracketsPattern.ReplaceAllString(showNameRaw, "")
 	// Clean up the show name: replace dots and spaces with underscores, trim
-	showName := strings.ReplaceAll(showNameRaw, ".", "_")
+	showName = strings.ReplaceAll(showName, ".", "_")
 	showName = strings.ReplaceAll(showName, " ", "_")
-	// Remove square brackets (common in anime releases: [Fansub] Show Name)
-	showName = strings.ReplaceAll(showName, "[", "")
-	showName = strings.ReplaceAll(showName, "]", "")
 	showName = strings.Trim(showName, "_")
 	// Remove trailing hyphens
 	showName = strings.Trim(showName, "-")
