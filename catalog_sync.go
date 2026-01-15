@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -182,14 +183,29 @@ func SendCatalogUpdate() error {
 		return fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
+	// Compress with gzip
+	var compressedBuffer bytes.Buffer
+	gzipWriter := gzip.NewWriter(&compressedBuffer)
+	if _, err := gzipWriter.Write(jsonData); err != nil {
+		return fmt.Errorf("failed to compress data: %w", err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		return fmt.Errorf("failed to close gzip writer: %w", err)
+	}
+
+	originalSize := len(jsonData)
+	compressedSize := compressedBuffer.Len()
+	compressionRatio := float64(compressedSize) / float64(originalSize) * 100
+
 	// Send POST request with longer timeout
 	client := &http.Client{Timeout: 60 * time.Second}
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", url, &compressedBuffer)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -202,8 +218,8 @@ func SendCatalogUpdate() error {
 	}
 
 	lastCatalogSyncTime = time.Now()
-	logMessage(LogLevelInfo, "CatalogSync", "Catalog update sent successfully (%d shows, %d episodes)",
-		len(data.Shows), data.Statistics.TotalEpisodes)
+	logMessage(LogLevelInfo, "CatalogSync", "Catalog update sent successfully (%d shows, %d episodes, %d KB → %d KB, %.1f%% compression)",
+		len(data.Shows), data.Statistics.TotalEpisodes, originalSize/1024, compressedSize/1024, compressionRatio)
 
 	return nil
 }
