@@ -225,6 +225,21 @@ func main() {
 	logMessage(LogLevelInfo, "Main", "  TV Shows Path: %s", TVShowPath)
 	logMessage(LogLevelInfo, "Main", "  Server Port: %s", PORT)
 
+	// Initialize catalog database
+	if err := InitCatalog(); err != nil {
+		logMessage(LogLevelError, "Main", "Failed to initialize catalog: %v", err)
+	} else {
+		logMessage(LogLevelInfo, "Main", "Catalog database initialized")
+		// Run initial scan in background
+		go func() {
+			time.Sleep(5 * time.Second) // Wait for startup
+			logMessage(LogLevelInfo, "Main", "Running initial catalog scan...")
+			if err := ScanAndUpdateCatalog(); err != nil {
+				logMessage(LogLevelError, "Main", "Initial catalog scan failed: %v", err)
+			}
+		}()
+	}
+
 	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -241,9 +256,12 @@ func main() {
 	})
 	r.POST("/download", HandleDownload)
 	r.GET("/queue", Queue)
+	r.GET("/catalog/stats", CatalogStats)
+	r.POST("/catalog/scan", CatalogScan)
+	r.GET("/catalog/search", CatalogSearch)
 
 	logMessage(LogLevelInfo, "Main", "HTTP server listening on port %s", PORT)
-	logMessage(LogLevelInfo, "Main", "Endpoints: GET /ping, POST /download, GET /queue")
+	logMessage(LogLevelInfo, "Main", "Endpoints: GET /ping, POST /download, GET /queue, GET /catalog/stats, POST /catalog/scan, GET /catalog/search")
 
 	if err := r.Run(":" + PORT); err != nil {
 		logMessage(LogLevelError, "Main", "Server failed to start: %v", err)
@@ -349,6 +367,12 @@ func (i *Item) StartDownload() error {
 	update(filename)
 	i.Completed = true
 	UpdateQueue(i)
+
+	// Add file to catalog
+	if err := AddFileToCatalog(fullPath); err != nil {
+		logMessage(LogLevelWarn, "Catalog", "Failed to add file to catalog: %v", err)
+	}
+
 	return nil
 }
 
