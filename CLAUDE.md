@@ -246,10 +246,12 @@ docker run -e MOVIES_PATH=/media/movies \
 ### File Organization
 
 - `main.go` - Application initialization and routing setup
-- `BotHandlers.go` - Discord bot commands (plex, dl, queue)
+- `BotHandlers.go` - Discord bot commands (plex, dl, queue, library commands)
 - `WebHandlers.go` - HTTP handlers for Put.io callbacks and Plex integration
 - `Utils.go` - Helper functions for content type detection, URL generation, directory handling
 - `plex-webhook.go` - Plex webhook event handling (play, pause, resume, stop, scrobble)
+- `plex-client.go` - Plex API client for querying show/episode metadata
+- `catalog.go` - Library catalog database functions
 - `Discord.go` - Discord-related utilities (currently minimal)
 
 ### Required Environment Variables
@@ -258,6 +260,10 @@ docker run -e MOVIES_PATH=/media/movies \
 PUTIO_OAUTH=<your_putio_token>     # Put.io OAuth token
 DISCORD_TOKEN=<your_bot_token>     # Discord bot token
 %=<command_prefix>                 # Discord command prefix (e.g., "!")
+
+# Optional: Plex API integration (for episode titles/summaries in !show command)
+PLEX_URL=http://plex.server:32400  # Plex server URL
+PLEX_TOKEN=<your_plex_token>       # Plex authentication token
 ```
 
 ### Common Commands
@@ -462,6 +468,54 @@ Bot: 📺 **Recently Added Episodes**
 - `GetShowEpisodes(showName)` - Returns all episodes for a specific show (exact match)
 - `SearchShows(query)` - Fuzzy search for shows (LIKE %query%), returns top 10 matches
 - `GetRecentEpisodes(limit)` - Returns N most recently added episodes (ordered by added_to_catalog DESC)
+
+### Plex API Integration
+
+The bot can optionally connect to your Plex server to display rich episode information:
+
+**Setup:**
+- Set `PLEX_URL` environment variable (e.g., `http://192.168.1.100:32400`)
+- Set `PLEX_TOKEN` environment variable (get from Plex: Settings → Account → Get Token)
+- If not configured, the `!show` command falls back to catalog-only display
+
+**Features:**
+- Automatic show search by name in Plex library
+- Episode titles and summaries from Plex metadata
+- Displays up to 5 episodes per season with titles
+- Falls back to catalog data if Plex is unavailable
+
+**Example Output with Plex:**
+```
+User: !show 30 Rock
+Bot: 📺 **30 Rock** (104 episodes)
+
+     **Season 2** (15 episodes):
+       E01: SeinfeldVision
+       E02: Jack Gets in the Game
+       E03: The Collection
+       E04: Rosemary's Baby
+       E05: Greenzo
+       ...and 10 more episodes
+
+     **Season 3** (22 episodes):
+       E01: Do-Over
+       E02: Believe in the Stars
+       E03: The One with the Cast of Night Court
+       E04: Gavin Volure
+       E05: Reunion
+       ...and 17 more episodes
+```
+
+**Plex Client Functions:**
+- `InitPlexClient(url, token)` - Initialize Plex connection on startup
+- `GetShowInfoFromPlex(showName)` - Query Plex for complete show/episode metadata
+- Returns episode numbers, titles, and summaries for all seasons
+
+**Implementation:**
+- Uses `jrudio/go-plex-client` library
+- Searches Plex TV Shows library for matching show
+- Retrieves all seasons and episodes with metadata
+- Gracefully degrades to catalog-only if Plex is unavailable
 
 ### Data Flow: Plex Downloads
 
