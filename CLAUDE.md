@@ -68,6 +68,7 @@ The catalog system automatically tracks all TV show files in a SQLite database:
 **Catalog Sync:**
 - Sends catalog to `https://putio.bramsoft.com/catalogUpdate`
 - Includes: all shows, seasons, episodes, statistics, recent additions
+- **Gzip compressed** (reduces payload by ~80%)
 - Syncs every 5 minutes (with queue polling)
 - **Debounced sync** when new files are added (10 second delay to batch changes)
 - Single sync after initial scan completes (prevents overwhelming server)
@@ -722,6 +723,25 @@ curl -X POST https://putio.bramsoft.com/catalogUpdate \
 # 3. Server will recover automatically
 
 # If server is stuck, restart putio-go-server to clear pending requests
+```
+
+**Problem:** HTTP 413 Payload Too Large on `/catalogUpdate`
+```bash
+# This happens when catalog grows too large (>1MB uncompressed)
+# Symptom: "Failed to send catalog update: server returned status: 413"
+
+# The fix (already implemented):
+# - Catalog payloads are now gzip compressed (~80% size reduction)
+# - Typical catalog: 5MB JSON → 1MB gzip compressed
+
+# If you still hit 413 errors with nginx, increase body size limit:
+# In nginx config:
+location /catalogUpdate {
+    client_max_body_size 50M;  # Allow large catalogs
+    proxy_pass http://localhost:8080;
+}
+
+# Then reload: sudo systemctl reload nginx
 ```
 
 ### Build Issues
