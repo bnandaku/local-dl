@@ -43,6 +43,9 @@ var tvShowPatternSimple = regexp.MustCompile(`\s-\s+(\d{1,3})(?:\D|$)`)
 // Pattern to match square brackets and their content (e.g., [Fansub], [1080p])
 var squareBracketsPattern = regexp.MustCompile(`\[[^\]]*\]`)
 
+// Pattern to match year in parentheses (e.g., (2024), (2022))
+var yearPattern = regexp.MustCompile(`\s*\((?:19|20)\d{2}\)`)
+
 // Logger levels
 const (
 	LogLevelInfo  = "INFO"
@@ -126,6 +129,8 @@ func parseTVShowInfo(filename string) TVShowInfo {
 
 	// Remove square brackets and their content (common in anime releases: [Fansub] Show Name)
 	showName := squareBracketsPattern.ReplaceAllString(showNameRaw, "")
+	// Remove year in parentheses (e.g., "Show Name (2024)" -> "Show Name")
+	showName = yearPattern.ReplaceAllString(showName, "")
 	// Clean up the show name: replace dots and spaces with underscores, trim
 	showName = strings.ReplaceAll(showName, ".", "_")
 	showName = strings.ReplaceAll(showName, " ", "_")
