@@ -236,7 +236,11 @@ func main() {
 			logMessage(LogLevelInfo, "Main", "Running initial catalog scan...")
 			if err := ScanAndUpdateCatalog(); err != nil {
 				logMessage(LogLevelError, "Main", "Initial catalog scan failed: %v", err)
+			} else {
+				logMessage(LogLevelInfo, "Main", "Initial catalog scan completed")
 			}
+			// Mark initial scan as complete and send catalog update
+			FinishInitialScan()
 		}()
 	}
 

@@ -5,7 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
+)
+
+var (
+	catalogSyncMutex     sync.Mutex
+	lastCatalogSyncTime  time.Time
+	catalogSyncDebounce  = 10 * time.Second // Wait 10 seconds before syncing
+	pendingSyncTimer     *time.Timer
+	isInitialScan        = true // Flag to prevent spam during initial scan
 )
 
 // CatalogSyncData represents the complete catalog data to send to putio-go-server
@@ -153,8 +162,12 @@ func GetCatalogSyncData() (*CatalogSyncData, error) {
 	return data, nil
 }
 
-// SendCatalogUpdate sends the catalog data to putio-go-server
+// SendCatalogUpdate sends the catalog data to putio-go-server (with mutex protection)
 func SendCatalogUpdate() error {
+	// Prevent concurrent syncs
+	catalogSyncMutex.Lock()
+	defer catalogSyncMutex.Unlock()
+
 	url := "https://putio.bramsoft.com/catalogUpdate"
 
 	// Get catalog data
@@ -169,8 +182,8 @@ func SendCatalogUpdate() error {
 		return fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
-	// Send POST request
-	client := &http.Client{Timeout: 30 * time.Second}
+	// Send POST request with longer timeout
+	client := &http.Client{Timeout: 60 * time.Second}
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -188,8 +201,46 @@ func SendCatalogUpdate() error {
 		return fmt.Errorf("server returned status: %d", resp.StatusCode)
 	}
 
+	lastCatalogSyncTime = time.Now()
 	logMessage(LogLevelInfo, "CatalogSync", "Catalog update sent successfully (%d shows, %d episodes)",
 		len(data.Shows), data.Statistics.TotalEpisodes)
 
 	return nil
+}
+
+// DebouncedCatalogSync schedules a catalog sync after a delay (batches multiple changes)
+func DebouncedCatalogSync() {
+	// Skip immediate sync during initial scan
+	if isInitialScan {
+		return
+	}
+
+	// Cancel pending timer if exists
+	if pendingSyncTimer != nil {
+		pendingSyncTimer.Stop()
+	}
+
+	// Schedule new sync after debounce period
+	pendingSyncTimer = time.AfterFunc(catalogSyncDebounce, func() {
+		if err := SendCatalogUpdate(); err != nil {
+			logMessage(LogLevelWarn, "CatalogSync", "Failed to send catalog update: %v", err)
+		}
+	})
+}
+
+// FinishInitialScan marks the initial scan as complete and triggers a sync
+func FinishInitialScan() {
+	if !isInitialScan {
+		return
+	}
+
+	isInitialScan = false
+	logMessage(LogLevelInfo, "CatalogSync", "Initial scan complete, sending catalog update")
+
+	// Send immediate sync after initial scan
+	go func() {
+		if err := SendCatalogUpdate(); err != nil {
+			logMessage(LogLevelWarn, "CatalogSync", "Failed to send catalog update: %v", err)
+		}
+	}()
 }
