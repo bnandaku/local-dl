@@ -73,10 +73,17 @@ func parseTVShowInfo(filename string) TVShowInfo {
 
 	// Extract show name (everything before SxxExx pattern)
 	showNameRaw := filename[:matches[0]]
-	// Clean up the show name: replace dots/underscores with spaces, trim
-	showName := strings.ReplaceAll(showNameRaw, ".", " ")
-	showName = strings.ReplaceAll(showName, "_", " ")
-	showName = strings.TrimSpace(showName)
+	// Clean up the show name: replace dots and spaces with underscores, trim
+	showName := strings.ReplaceAll(showNameRaw, ".", "_")
+	showName = strings.ReplaceAll(showName, " ", "_")
+	showName = strings.Trim(showName, "_")
+	// Remove trailing hyphens
+	showName = strings.Trim(showName, "-")
+	showName = strings.Trim(showName, "_")
+	// Remove duplicate underscores
+	for strings.Contains(showName, "__") {
+		showName = strings.ReplaceAll(showName, "__", "_")
+	}
 
 	// Extract season number (first capture group)
 	seasonNum := filename[matches[2]:matches[3]]
@@ -108,9 +115,9 @@ func buildTVShowPath(basePath string, info TVShowInfo) (string, error) {
 		return basePath, nil
 	}
 
-	// Create path: basePath/ShowName/Season XX/
+	// Create path: basePath/ShowName/Season_XX/
 	showDir := filepath.Join(basePath, info.ShowName)
-	seasonDir := filepath.Join(showDir, fmt.Sprintf("Season %s", info.Season))
+	seasonDir := filepath.Join(showDir, fmt.Sprintf("Season_%s", info.Season))
 
 	// Create directories if they don't exist
 	if err := os.MkdirAll(seasonDir, 0755); err != nil {
