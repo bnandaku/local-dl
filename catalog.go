@@ -95,7 +95,87 @@ func InitCatalog() error {
 		return fmt.Errorf("failed to create catalog schema: %w", err)
 	}
 
+	// Run migrations for existing databases
+	if err := migrateCatalogSchema(); err != nil {
+		return fmt.Errorf("failed to migrate catalog schema: %w", err)
+	}
+
 	logMessage(LogLevelInfo, "Catalog", "Catalog database initialized at %s", CatalogPath)
+	return nil
+}
+
+// migrateCatalogSchema adds missing columns to existing databases
+func migrateCatalogSchema() error {
+	// Check if media_type column exists
+	rows, err := CatalogDB.Query("PRAGMA table_info(files)")
+	if err != nil {
+		return fmt.Errorf("failed to check table schema: %w", err)
+	}
+	defer rows.Close()
+
+	hasMediaType := false
+	hasTitle := false
+	hasYear := false
+	hasQuality := false
+
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var dfltValue interface{}
+
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
+			continue
+		}
+
+		switch name {
+		case "media_type":
+			hasMediaType = true
+		case "title":
+			hasTitle = true
+		case "year":
+			hasYear = true
+		case "quality":
+			hasQuality = true
+		}
+	}
+
+	// Add missing columns
+	if !hasMediaType {
+		logMessage(LogLevelInfo, "Catalog", "Adding media_type column to existing database")
+		if _, err := CatalogDB.Exec("ALTER TABLE files ADD COLUMN media_type TEXT DEFAULT 'tv'"); err != nil {
+			return fmt.Errorf("failed to add media_type column: %w", err)
+		}
+	}
+
+	if !hasTitle {
+		logMessage(LogLevelInfo, "Catalog", "Adding title column to existing database")
+		if _, err := CatalogDB.Exec("ALTER TABLE files ADD COLUMN title TEXT"); err != nil {
+			return fmt.Errorf("failed to add title column: %w", err)
+		}
+	}
+
+	if !hasYear {
+		logMessage(LogLevelInfo, "Catalog", "Adding year column to existing database")
+		if _, err := CatalogDB.Exec("ALTER TABLE files ADD COLUMN year TEXT"); err != nil {
+			return fmt.Errorf("failed to add year column: %w", err)
+		}
+	}
+
+	if !hasQuality {
+		logMessage(LogLevelInfo, "Catalog", "Adding quality column to existing database")
+		if _, err := CatalogDB.Exec("ALTER TABLE files ADD COLUMN quality TEXT"); err != nil {
+			return fmt.Errorf("failed to add quality column: %w", err)
+		}
+	}
+
+	// Create index if it doesn't exist (IF NOT EXISTS handles this)
+	if !hasMediaType {
+		if _, err := CatalogDB.Exec("CREATE INDEX IF NOT EXISTS idx_media_type ON files(media_type)"); err != nil {
+			return fmt.Errorf("failed to create media_type index: %w", err)
+		}
+	}
+
 	return nil
 }
 
