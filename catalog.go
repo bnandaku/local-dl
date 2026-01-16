@@ -20,9 +20,13 @@ type FileEntry struct {
 	ID              int64
 	FilePath        string
 	Filename        string
-	ShowName        string
-	Season          string
-	Episode         string
+	MediaType       string // "tv" or "movie"
+	ShowName        string // For TV shows
+	Season          string // For TV shows
+	Episode         string // For TV shows
+	Title           string // For movies
+	Year            string // For movies
+	Quality         string // For movies (720p, 1080p, etc.)
 	FileSize        int64
 	CreatedAt       time.Time
 	ModifiedAt      time.Time
@@ -49,9 +53,13 @@ func InitCatalog() error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		file_path TEXT UNIQUE NOT NULL,
 		filename TEXT NOT NULL,
+		media_type TEXT DEFAULT 'tv',
 		show_name TEXT,
 		season TEXT,
 		episode TEXT,
+		title TEXT,
+		year TEXT,
+		quality TEXT,
 		file_size INTEGER,
 		created_at DATETIME,
 		modified_at DATETIME,
@@ -60,8 +68,10 @@ func InitCatalog() error {
 		status TEXT DEFAULT 'active'
 	);
 
+	CREATE INDEX IF NOT EXISTS idx_media_type ON files(media_type);
 	CREATE INDEX IF NOT EXISTS idx_show_name ON files(show_name);
 	CREATE INDEX IF NOT EXISTS idx_season ON files(season);
+	CREATE INDEX IF NOT EXISTS idx_title ON files(title);
 	CREATE INDEX IF NOT EXISTS idx_status ON files(status);
 	CREATE INDEX IF NOT EXISTS idx_file_path ON files(file_path);
 
@@ -69,9 +79,12 @@ func InitCatalog() error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		event_type TEXT NOT NULL,
 		file_path TEXT NOT NULL,
+		media_type TEXT,
 		show_name TEXT,
 		season TEXT,
 		episode TEXT,
+		title TEXT,
+		year TEXT,
 		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
 		details TEXT
 	);
@@ -100,71 +113,143 @@ func AddFileToCatalog(filePath string) error {
 
 	filename := filepath.Base(filePath)
 
-	// Parse TV show info
-	tvInfo := parseTVShowInfo(filename)
+	// Determine if this is a TV show or movie based on path
+	mediaType := "tv"
+	isMoviePath := strings.Contains(filePath, MoviesPath)
+
+	if isMoviePath {
+		mediaType = "movie"
+	}
 
 	// Check if file already exists in catalog
 	var existingID int64
 	err = CatalogDB.QueryRow("SELECT id FROM files WHERE file_path = ?", filePath).Scan(&existingID)
 
 	if err == sql.ErrNoRows {
-		// New file - insert
-		result, err := CatalogDB.Exec(`
-			INSERT INTO files (file_path, filename, show_name, season, episode, file_size, created_at, modified_at, last_seen_at, status)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+		// New file - insert based on media type
+		if mediaType == "movie" {
+			// Parse movie info
+			movieInfo := parseMovieInfo(filename)
+
+			result, err := CatalogDB.Exec(`
+				INSERT INTO files (file_path, filename, media_type, title, year, quality, file_size, created_at, modified_at, last_seen_at, status)
+				VALUES (?, ?, 'movie', ?, ?, ?, ?, ?, ?, ?, 'active')
+			`,
+				filePath,
+				filename,
+				movieInfo.Title,
+				movieInfo.Year,
+				movieInfo.Quality,
+				fileInfo.Size(),
+				fileInfo.ModTime(),
+				fileInfo.ModTime(),
+				time.Now(),
+			)
+
+			if err != nil {
+				return fmt.Errorf("failed to insert movie: %w", err)
+			}
+
+			_, _ = result.LastInsertId()
+
+			// Log event
+			logCatalogEvent("added", filePath, "movie", "", "", "", movieInfo.Title, movieInfo.Year, "")
+
+			logMessage(LogLevelInfo, "Catalog", "Added movie: %s (%s) [%s]", movieInfo.Title, movieInfo.Year, movieInfo.Quality)
+
+			// Schedule debounced catalog update (batches multiple changes)
+			DebouncedCatalogSync()
+
+			return nil
+		} else {
+			// Parse TV show info
+			tvInfo := parseTVShowInfo(filename)
+
+			result, err := CatalogDB.Exec(`
+				INSERT INTO files (file_path, filename, media_type, show_name, season, episode, file_size, created_at, modified_at, last_seen_at, status)
+				VALUES (?, ?, 'tv', ?, ?, ?, ?, ?, ?, ?, 'active')
+			`,
+				filePath,
+				filename,
+				tvInfo.ShowName,
+				tvInfo.Season,
+				tvInfo.Episode,
+				fileInfo.Size(),
+				fileInfo.ModTime(),
+				fileInfo.ModTime(),
+				time.Now(),
+			)
+
+			if err != nil {
+				return fmt.Errorf("failed to insert TV show: %w", err)
+			}
+
+			_, _ = result.LastInsertId()
+
+			// Log event
+			logCatalogEvent("added", filePath, "tv", tvInfo.ShowName, tvInfo.Season, tvInfo.Episode, "", "", "")
+
+			logMessage(LogLevelInfo, "Catalog", "Added TV show: %s S%sE%s", tvInfo.ShowName, tvInfo.Season, tvInfo.Episode)
+
+			// Schedule debounced catalog update (batches multiple changes)
+			DebouncedCatalogSync()
+
+			return nil
+		}
+	} else if err != nil {
+		return fmt.Errorf("failed to check existing file: %w", err)
+	}
+
+	// File exists - update based on media type
+	if mediaType == "movie" {
+		movieInfo := parseMovieInfo(filename)
+
+		_, err = CatalogDB.Exec(`
+			UPDATE files
+			SET filename = ?, title = ?, year = ?, quality = ?, file_size = ?, modified_at = ?, last_seen_at = ?, status = 'active'
+			WHERE id = ?
 		`,
-			filePath,
+			filename,
+			movieInfo.Title,
+			movieInfo.Year,
+			movieInfo.Quality,
+			fileInfo.Size(),
+			fileInfo.ModTime(),
+			time.Now(),
+			existingID,
+		)
+
+		if err != nil {
+			return fmt.Errorf("failed to update movie: %w", err)
+		}
+
+		logCatalogEvent("updated", filePath, "movie", "", "", "", movieInfo.Title, movieInfo.Year, "")
+		logMessage(LogLevelInfo, "Catalog", "Updated movie: %s", filename)
+	} else {
+		tvInfo := parseTVShowInfo(filename)
+
+		_, err = CatalogDB.Exec(`
+			UPDATE files
+			SET filename = ?, show_name = ?, season = ?, episode = ?, file_size = ?, modified_at = ?, last_seen_at = ?, status = 'active'
+			WHERE id = ?
+		`,
 			filename,
 			tvInfo.ShowName,
 			tvInfo.Season,
 			tvInfo.Episode,
 			fileInfo.Size(),
 			fileInfo.ModTime(),
-			fileInfo.ModTime(),
 			time.Now(),
+			existingID,
 		)
 
 		if err != nil {
-			return fmt.Errorf("failed to insert file: %w", err)
+			return fmt.Errorf("failed to update TV show: %w", err)
 		}
 
-		_, _ = result.LastInsertId()
-
-		// Log event
-		logCatalogEvent("added", filePath, tvInfo.ShowName, tvInfo.Season, tvInfo.Episode, "")
-
-		logMessage(LogLevelInfo, "Catalog", "Added: %s (Show: %s S%sE%s)", filename, tvInfo.ShowName, tvInfo.Season, tvInfo.Episode)
-
-		// Schedule debounced catalog update (batches multiple changes)
-		DebouncedCatalogSync()
-
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("failed to check existing file: %w", err)
+		logCatalogEvent("updated", filePath, "tv", tvInfo.ShowName, tvInfo.Season, tvInfo.Episode, "", "", "")
+		logMessage(LogLevelInfo, "Catalog", "Updated TV show: %s", filename)
 	}
-
-	// File exists - update
-	_, err = CatalogDB.Exec(`
-		UPDATE files
-		SET filename = ?, show_name = ?, season = ?, episode = ?, file_size = ?, modified_at = ?, last_seen_at = ?, status = 'active'
-		WHERE id = ?
-	`,
-		filename,
-		tvInfo.ShowName,
-		tvInfo.Season,
-		tvInfo.Episode,
-		fileInfo.Size(),
-		fileInfo.ModTime(),
-		time.Now(),
-		existingID,
-	)
-
-	if err != nil {
-		return fmt.Errorf("failed to update file: %w", err)
-	}
-
-	logCatalogEvent("updated", filePath, tvInfo.ShowName, tvInfo.Season, tvInfo.Episode, "")
-	logMessage(LogLevelInfo, "Catalog", "Updated: %s", filename)
 
 	return nil
 }
@@ -176,8 +261,8 @@ func RemoveFileFromCatalog(filePath string) error {
 	}
 
 	// Get file info before marking as deleted
-	var showName, season, episode string
-	err := CatalogDB.QueryRow("SELECT show_name, season, episode FROM files WHERE file_path = ?", filePath).Scan(&showName, &season, &episode)
+	var mediaType, showName, season, episode, title, year string
+	err := CatalogDB.QueryRow("SELECT media_type, show_name, season, episode, title, year FROM files WHERE file_path = ?", filePath).Scan(&mediaType, &showName, &season, &episode, &title, &year)
 	if err != nil {
 		return err
 	}
@@ -187,23 +272,23 @@ func RemoveFileFromCatalog(filePath string) error {
 		return fmt.Errorf("failed to mark file as deleted: %w", err)
 	}
 
-	logCatalogEvent("deleted", filePath, showName, season, episode, "")
+	logCatalogEvent("deleted", filePath, mediaType, showName, season, episode, title, year, "")
 	logMessage(LogLevelInfo, "Catalog", "Marked as deleted: %s", filePath)
 
 	return nil
 }
 
-// ScanAndUpdateCatalog scans the TV shows directory and updates the catalog
+// ScanAndUpdateCatalog scans the TV shows and movies directories and updates the catalog
 func ScanAndUpdateCatalog() error {
 	if CatalogDB == nil {
 		return fmt.Errorf("catalog database not initialized")
 	}
 
-	if TVShowPath == "" {
-		return fmt.Errorf("TVSHOW_PATH not set")
+	if TVShowPath == "" && MoviesPath == "" {
+		return fmt.Errorf("neither TVSHOW_PATH nor MOVIES_PATH is set")
 	}
 
-	logMessage(LogLevelInfo, "Catalog", "Starting catalog scan of %s", TVShowPath)
+	logMessage(LogLevelInfo, "Catalog", "Starting catalog scan (TV: %s, Movies: %s)", TVShowPath, MoviesPath)
 
 	// Get all files currently in catalog
 	catalogedFiles := make(map[string]bool)
@@ -229,36 +314,48 @@ func ScanAndUpdateCatalog() error {
 	addedCount := 0
 	updatedCount := 0
 
-	err = filepath.Walk(TVShowPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil // Skip errors
-		}
-
-		if info.IsDir() {
+	scanPath := func(basePath string) error {
+		if basePath == "" {
 			return nil
 		}
 
-		// Check if it's a video file
-		ext := strings.ToLower(filepath.Ext(path))
-		if !videoExtensions[ext] {
-			return nil
-		}
-
-		// Add or update file in catalog
-		if err := AddFileToCatalog(path); err == nil {
-			if _, exists := catalogedFiles[path]; exists {
-				catalogedFiles[path] = true // Mark as seen
-				updatedCount++
-			} else {
-				addedCount++
+		return filepath.Walk(basePath, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil // Skip errors
 			}
-		}
 
-		return nil
-	})
+			if info.IsDir() {
+				return nil
+			}
 
-	if err != nil {
-		return fmt.Errorf("failed to walk directory: %w", err)
+			// Check if it's a video file
+			ext := strings.ToLower(filepath.Ext(path))
+			if !videoExtensions[ext] {
+				return nil
+			}
+
+			// Add or update file in catalog
+			if err := AddFileToCatalog(path); err == nil {
+				if _, exists := catalogedFiles[path]; exists {
+					catalogedFiles[path] = true // Mark as seen
+					updatedCount++
+				} else {
+					addedCount++
+				}
+			}
+
+			return nil
+		})
+	}
+
+	// Scan TV shows directory
+	if err := scanPath(TVShowPath); err != nil {
+		logMessage(LogLevelWarn, "Catalog", "Error scanning TV shows: %v", err)
+	}
+
+	// Scan movies directory
+	if err := scanPath(MoviesPath); err != nil {
+		logMessage(LogLevelWarn, "Catalog", "Error scanning movies: %v", err)
 	}
 
 	// Mark files not seen as deleted
@@ -277,15 +374,15 @@ func ScanAndUpdateCatalog() error {
 }
 
 // logCatalogEvent logs an event to the catalog_events table
-func logCatalogEvent(eventType, filePath, showName, season, episode, details string) {
+func logCatalogEvent(eventType, filePath, mediaType, showName, season, episode, title, year, details string) {
 	if CatalogDB == nil {
 		return
 	}
 
 	_, err := CatalogDB.Exec(`
-		INSERT INTO catalog_events (event_type, file_path, show_name, season, episode, details)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, eventType, filePath, showName, season, episode, details)
+		INSERT INTO catalog_events (event_type, file_path, media_type, show_name, season, episode, title, year, details)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, eventType, filePath, mediaType, showName, season, episode, title, year, details)
 
 	if err != nil {
 		logMessage(LogLevelWarn, "Catalog", "Failed to log event: %v", err)
@@ -310,16 +407,33 @@ func GetCatalogStats() (map[string]interface{}, error) {
 	stats["active_files"] = activeFiles
 	stats["deleted_files"] = deletedFiles
 
-	// Total shows
-	var totalShows int
-	CatalogDB.QueryRow("SELECT COUNT(DISTINCT show_name) FROM files WHERE status = 'active'").Scan(&totalShows)
+	// Total TV shows and episodes
+	var totalShows, totalEpisodes int
+	CatalogDB.QueryRow("SELECT COUNT(DISTINCT show_name) FROM files WHERE status = 'active' AND media_type = 'tv'").Scan(&totalShows)
+	CatalogDB.QueryRow("SELECT COUNT(*) FROM files WHERE status = 'active' AND media_type = 'tv'").Scan(&totalEpisodes)
 	stats["total_shows"] = totalShows
+	stats["total_episodes"] = totalEpisodes
+
+	// Total movies
+	var totalMovies int
+	CatalogDB.QueryRow("SELECT COUNT(*) FROM files WHERE status = 'active' AND media_type = 'movie'").Scan(&totalMovies)
+	stats["total_movies"] = totalMovies
 
 	// Total size
 	var totalSize int64
 	CatalogDB.QueryRow("SELECT COALESCE(SUM(file_size), 0) FROM files WHERE status = 'active'").Scan(&totalSize)
 	stats["total_size_bytes"] = totalSize
 	stats["total_size_gb"] = float64(totalSize) / (1024 * 1024 * 1024)
+
+	// TV shows size
+	var tvSize int64
+	CatalogDB.QueryRow("SELECT COALESCE(SUM(file_size), 0) FROM files WHERE status = 'active' AND media_type = 'tv'").Scan(&tvSize)
+	stats["tv_size_gb"] = float64(tvSize) / (1024 * 1024 * 1024)
+
+	// Movies size
+	var moviesSize int64
+	CatalogDB.QueryRow("SELECT COALESCE(SUM(file_size), 0) FROM files WHERE status = 'active' AND media_type = 'movie'").Scan(&moviesSize)
+	stats["movies_size_gb"] = float64(moviesSize) / (1024 * 1024 * 1024)
 
 	return stats, nil
 }

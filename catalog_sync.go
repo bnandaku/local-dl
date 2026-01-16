@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -23,15 +24,19 @@ type CatalogSyncData struct {
 	Timestamp  time.Time              `json:"timestamp"`
 	Statistics CatalogStatistics      `json:"statistics"`
 	Shows      []ShowData             `json:"shows"`
-	Recent     []RecentEpisode        `json:"recent"`
+	Movies     []MovieData            `json:"movies"`
+	Recent     []RecentItem           `json:"recent"`
 }
 
 // CatalogStatistics holds overall catalog statistics
 type CatalogStatistics struct {
-	TotalShows    int     `json:"total_shows"`
-	TotalEpisodes int     `json:"total_episodes"`
-	TotalSizeGB   float64 `json:"total_size_gb"`
-	TotalSizeBytes int64  `json:"total_size_bytes"`
+	TotalShows     int     `json:"total_shows"`
+	TotalEpisodes  int     `json:"total_episodes"`
+	TotalMovies    int     `json:"total_movies"`
+	TotalSizeGB    float64 `json:"total_size_gb"`
+	TotalSizeBytes int64   `json:"total_size_bytes"`
+	TVSizeGB       float64 `json:"tv_size_gb"`
+	MoviesSizeGB   float64 `json:"movies_size_gb"`
 }
 
 // ShowData represents a TV show with all its seasons and episodes
@@ -55,12 +60,26 @@ type EpisodeData struct {
 	ModifiedAt string `json:"modified_at"`
 }
 
-// RecentEpisode represents a recently added episode
-type RecentEpisode struct {
-	ShowName      string `json:"show_name"`
-	Season        string `json:"season"`
-	Episode       string `json:"episode"`
-	Filename      string `json:"filename"`
+// MovieData represents a movie
+type MovieData struct {
+	Title      string `json:"title"`
+	Year       string `json:"year"`
+	Quality    string `json:"quality"`
+	Filename   string `json:"filename"`
+	FilePath   string `json:"file_path"`
+	FileSize   int64  `json:"file_size"`
+	ModifiedAt string `json:"modified_at"`
+}
+
+// RecentItem represents a recently added TV episode or movie
+type RecentItem struct {
+	MediaType      string `json:"media_type"` // "tv" or "movie"
+	ShowName       string `json:"show_name,omitempty"`
+	Season         string `json:"season,omitempty"`
+	Episode        string `json:"episode,omitempty"`
+	Title          string `json:"title,omitempty"`
+	Year           string `json:"year,omitempty"`
+	Filename       string `json:"filename"`
 	AddedToCatalog string `json:"added_to_catalog"`
 }
 
@@ -82,30 +101,33 @@ func GetCatalogSyncData() (*CatalogSyncData, error) {
 
 	data.Statistics = CatalogStatistics{
 		TotalShows:     stats["total_shows"].(int),
-		TotalEpisodes:  stats["active_files"].(int),
+		TotalEpisodes:  stats["total_episodes"].(int),
+		TotalMovies:    stats["total_movies"].(int),
 		TotalSizeGB:    stats["total_size_gb"].(float64),
 		TotalSizeBytes: stats["total_size_bytes"].(int64),
+		TVSizeGB:       stats["tv_size_gb"].(float64),
+		MoviesSizeGB:   stats["movies_size_gb"].(float64),
 	}
 
-	// Get all shows with seasons and episodes
+	// Get all TV shows with seasons and episodes
 	shows := make(map[string]map[string][]EpisodeData)
 
-	rows, err := CatalogDB.Query(`
+	tvRows, err := CatalogDB.Query(`
 		SELECT show_name, season, episode, filename, file_path, file_size, modified_at
 		FROM files
-		WHERE status = 'active'
+		WHERE status = 'active' AND media_type = 'tv'
 		ORDER BY show_name, season, episode
 	`)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query catalog: %w", err)
+		return nil, fmt.Errorf("failed to query TV shows: %w", err)
 	}
-	defer rows.Close()
+	defer tvRows.Close()
 
-	for rows.Next() {
+	for tvRows.Next() {
 		var showName, season, episode, filename, filePath, modifiedAt string
 		var fileSize int64
 
-		if err := rows.Scan(&showName, &season, &episode, &filename, &filePath, &fileSize, &modifiedAt); err != nil {
+		if err := tvRows.Scan(&showName, &season, &episode, &filename, &filePath, &fileSize, &modifiedAt); err != nil {
 			continue
 		}
 
@@ -122,7 +144,7 @@ func GetCatalogSyncData() (*CatalogSyncData, error) {
 		})
 	}
 
-	// Convert to slice structure
+	// Convert to slice structure for TV shows
 	for showName, seasons := range shows {
 		showData := ShowData{
 			ShowName: showName,
@@ -139,9 +161,40 @@ func GetCatalogSyncData() (*CatalogSyncData, error) {
 		data.Shows = append(data.Shows, showData)
 	}
 
-	// Get recent additions (last 50)
+	// Get all movies
+	movieRows, err := CatalogDB.Query(`
+		SELECT title, year, quality, filename, file_path, file_size, modified_at
+		FROM files
+		WHERE status = 'active' AND media_type = 'movie'
+		ORDER BY title, year
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query movies: %w", err)
+	}
+	defer movieRows.Close()
+
+	for movieRows.Next() {
+		var title, year, quality, filename, filePath, modifiedAt string
+		var fileSize int64
+
+		if err := movieRows.Scan(&title, &year, &quality, &filename, &filePath, &fileSize, &modifiedAt); err != nil {
+			continue
+		}
+
+		data.Movies = append(data.Movies, MovieData{
+			Title:      title,
+			Year:       year,
+			Quality:    quality,
+			Filename:   filename,
+			FilePath:   filePath,
+			FileSize:   fileSize,
+			ModifiedAt: modifiedAt,
+		})
+	}
+
+	// Get recent additions (last 50, both TV and movies)
 	recentRows, err := CatalogDB.Query(`
-		SELECT show_name, season, episode, filename, added_to_catalog
+		SELECT media_type, show_name, season, episode, title, year, filename, added_to_catalog
 		FROM files
 		WHERE status = 'active'
 		ORDER BY added_to_catalog DESC
@@ -153,10 +206,29 @@ func GetCatalogSyncData() (*CatalogSyncData, error) {
 	defer recentRows.Close()
 
 	for recentRows.Next() {
-		var recent RecentEpisode
-		if err := recentRows.Scan(&recent.ShowName, &recent.Season, &recent.Episode, &recent.Filename, &recent.AddedToCatalog); err != nil {
+		var recent RecentItem
+		var showName, season, episode, title, year sql.NullString
+
+		if err := recentRows.Scan(&recent.MediaType, &showName, &season, &episode, &title, &year, &recent.Filename, &recent.AddedToCatalog); err != nil {
 			continue
 		}
+
+		if showName.Valid {
+			recent.ShowName = showName.String
+		}
+		if season.Valid {
+			recent.Season = season.String
+		}
+		if episode.Valid {
+			recent.Episode = episode.String
+		}
+		if title.Valid {
+			recent.Title = title.String
+		}
+		if year.Valid {
+			recent.Year = year.String
+		}
+
 		data.Recent = append(data.Recent, recent)
 	}
 
@@ -218,8 +290,8 @@ func SendCatalogUpdate() error {
 	}
 
 	lastCatalogSyncTime = time.Now()
-	logMessage(LogLevelInfo, "CatalogSync", "Catalog update sent successfully (%d shows, %d episodes, %d KB → %d KB, %.1f%% compression)",
-		len(data.Shows), data.Statistics.TotalEpisodes, originalSize/1024, compressedSize/1024, compressionRatio)
+	logMessage(LogLevelInfo, "CatalogSync", "Catalog update sent successfully (%d shows, %d episodes, %d movies, %d KB → %d KB, %.1f%% compression)",
+		len(data.Shows), data.Statistics.TotalEpisodes, len(data.Movies), originalSize/1024, compressedSize/1024, compressionRatio)
 
 	return nil
 }

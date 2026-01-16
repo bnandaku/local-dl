@@ -66,6 +66,16 @@ type TVShowInfo struct {
 	StandardName   string // Standardized filename: ShowName.SXXEXX.quality.ext
 }
 
+// MovieInfo holds parsed information about a movie
+type MovieInfo struct {
+	Title        string
+	Year         string
+	Quality      string // Resolution, codec, etc. (1080p, BluRay, x264, etc.)
+	OriginalName string
+	Extension    string
+	HasMovieInfo bool
+}
+
 func logMessage(level, component, message string, args ...interface{}) {
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	formattedMsg := fmt.Sprintf(message, args...)
@@ -208,6 +218,84 @@ func buildTVShowPath(basePath string, info TVShowInfo) (string, error) {
 
 	logMessage(LogLevelInfo, "FileOrg", "Created directory structure: %s", seasonDir)
 	return seasonDir, nil
+}
+
+// parseMovieInfo extracts title, year, and quality from movie filename
+// Expected format: Title.Year.Quality.ext (e.g., Inception.2010.1080p.mkv)
+// Also handles: Title (Year) Quality.ext, Title.Year.ext, etc.
+func parseMovieInfo(filename string) MovieInfo {
+	info := MovieInfo{
+		OriginalName:  filename,
+		HasMovieInfo:  false,
+	}
+
+	extension := filepath.Ext(filename)
+	info.Extension = extension
+	filenameWithoutExt := strings.TrimSuffix(filename, extension)
+
+	// Pattern to match year (1900-2099)
+	yearRegex := regexp.MustCompile(`(?:^|\.)(\d{4})(?:\.|$)`)
+	yearMatches := yearRegex.FindStringSubmatch(filenameWithoutExt)
+
+	var year string
+	var titlePart string
+	var qualityPart string
+
+	if len(yearMatches) >= 2 {
+		year = yearMatches[1]
+		// Validate year range
+		yearInt, _ := strconv.Atoi(year)
+		if yearInt >= 1900 && yearInt <= 2099 {
+			info.Year = year
+
+			// Split filename into parts using the year as delimiter
+			parts := strings.Split(filenameWithoutExt, year)
+			if len(parts) >= 1 {
+				// Everything before year is the title
+				titlePart = strings.TrimSuffix(parts[0], ".")
+				titlePart = strings.TrimPrefix(titlePart, ".")
+
+				// Everything after year is quality info
+				if len(parts) > 1 {
+					qualityPart = strings.TrimPrefix(parts[1], ".")
+					qualityPart = strings.TrimSuffix(qualityPart, ".")
+				}
+			}
+		}
+	}
+
+	// If no year found, try to extract quality markers from the end
+	if year == "" {
+		// Common quality patterns: 720p, 1080p, 2160p, BluRay, WEB-DL, etc.
+		qualityRegex := regexp.MustCompile(`(?i)\.(720p|1080p|2160p|4K|BluRay|BrRip|WEB-DL|WEBRip|HDTV|x264|x265|HEVC|10bit).*$`)
+		if qualityMatch := qualityRegex.FindStringIndex(filenameWithoutExt); qualityMatch != nil {
+			titlePart = filenameWithoutExt[:qualityMatch[0]]
+			qualityPart = filenameWithoutExt[qualityMatch[0]+1:] // Skip the dot
+		} else {
+			// No quality markers found, entire filename is title
+			titlePart = filenameWithoutExt
+		}
+	}
+
+	// Clean up title: replace dots/underscores with spaces, remove brackets
+	title := titlePart
+	title = strings.ReplaceAll(title, ".", " ")
+	title = strings.ReplaceAll(title, "_", " ")
+	title = squareBracketsPattern.ReplaceAllString(title, "")
+	title = strings.TrimSpace(title)
+
+	// Clean up quality info
+	quality := qualityPart
+	if quality != "" {
+		quality = strings.ReplaceAll(quality, ".", " ")
+		quality = strings.TrimSpace(quality)
+	}
+
+	info.Title = title
+	info.Quality = quality
+	info.HasMovieInfo = (title != "")
+
+	return info
 }
 
 func main() {
