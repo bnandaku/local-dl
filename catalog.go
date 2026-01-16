@@ -47,19 +47,15 @@ func InitCatalog() error {
 		return fmt.Errorf("failed to open catalog database: %w", err)
 	}
 
-	// Create tables
-	schema := `
+	// Create basic tables first (without new columns to support old databases)
+	basicSchema := `
 	CREATE TABLE IF NOT EXISTS files (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		file_path TEXT UNIQUE NOT NULL,
 		filename TEXT NOT NULL,
-		media_type TEXT DEFAULT 'tv',
 		show_name TEXT,
 		season TEXT,
 		episode TEXT,
-		title TEXT,
-		year TEXT,
-		quality TEXT,
 		file_size INTEGER,
 		created_at DATETIME,
 		modified_at DATETIME,
@@ -68,36 +64,41 @@ func InitCatalog() error {
 		status TEXT DEFAULT 'active'
 	);
 
+	CREATE TABLE IF NOT EXISTS catalog_events (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		event_type TEXT NOT NULL,
+		file_path TEXT NOT NULL,
+		show_name TEXT,
+		season TEXT,
+		episode TEXT,
+		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+		details TEXT
+	);
+	`
+
+	_, err = CatalogDB.Exec(basicSchema)
+	if err != nil {
+		return fmt.Errorf("failed to create basic catalog schema: %w", err)
+	}
+
+	// Run migrations to add new columns for existing databases
+	if err := migrateCatalogSchema(); err != nil {
+		return fmt.Errorf("failed to migrate catalog schema: %w", err)
+	}
+
+	// Create indexes after migration ensures columns exist
+	indexes := `
 	CREATE INDEX IF NOT EXISTS idx_media_type ON files(media_type);
 	CREATE INDEX IF NOT EXISTS idx_show_name ON files(show_name);
 	CREATE INDEX IF NOT EXISTS idx_season ON files(season);
 	CREATE INDEX IF NOT EXISTS idx_title ON files(title);
 	CREATE INDEX IF NOT EXISTS idx_status ON files(status);
 	CREATE INDEX IF NOT EXISTS idx_file_path ON files(file_path);
-
-	CREATE TABLE IF NOT EXISTS catalog_events (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		event_type TEXT NOT NULL,
-		file_path TEXT NOT NULL,
-		media_type TEXT,
-		show_name TEXT,
-		season TEXT,
-		episode TEXT,
-		title TEXT,
-		year TEXT,
-		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-		details TEXT
-	);
 	`
 
-	_, err = CatalogDB.Exec(schema)
+	_, err = CatalogDB.Exec(indexes)
 	if err != nil {
-		return fmt.Errorf("failed to create catalog schema: %w", err)
-	}
-
-	// Run migrations for existing databases
-	if err := migrateCatalogSchema(); err != nil {
-		return fmt.Errorf("failed to migrate catalog schema: %w", err)
+		return fmt.Errorf("failed to create indexes: %w", err)
 	}
 
 	logMessage(LogLevelInfo, "Catalog", "Catalog database initialized at %s", CatalogPath)
@@ -169,10 +170,56 @@ func migrateCatalogSchema() error {
 		}
 	}
 
-	// Create index if it doesn't exist (IF NOT EXISTS handles this)
-	if !hasMediaType {
-		if _, err := CatalogDB.Exec("CREATE INDEX IF NOT EXISTS idx_media_type ON files(media_type)"); err != nil {
-			return fmt.Errorf("failed to create media_type index: %w", err)
+	// Migrate catalog_events table as well
+	eventRows, err := CatalogDB.Query("PRAGMA table_info(catalog_events)")
+	if err != nil {
+		return fmt.Errorf("failed to check catalog_events schema: %w", err)
+	}
+	defer eventRows.Close()
+
+	hasEventMediaType := false
+	hasEventTitle := false
+	hasEventYear := false
+
+	for eventRows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var dfltValue interface{}
+
+		if err := eventRows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
+			continue
+		}
+
+		switch name {
+		case "media_type":
+			hasEventMediaType = true
+		case "title":
+			hasEventTitle = true
+		case "year":
+			hasEventYear = true
+		}
+	}
+
+	// Add missing columns to catalog_events
+	if !hasEventMediaType {
+		logMessage(LogLevelInfo, "Catalog", "Adding media_type column to catalog_events table")
+		if _, err := CatalogDB.Exec("ALTER TABLE catalog_events ADD COLUMN media_type TEXT"); err != nil {
+			return fmt.Errorf("failed to add media_type to catalog_events: %w", err)
+		}
+	}
+
+	if !hasEventTitle {
+		logMessage(LogLevelInfo, "Catalog", "Adding title column to catalog_events table")
+		if _, err := CatalogDB.Exec("ALTER TABLE catalog_events ADD COLUMN title TEXT"); err != nil {
+			return fmt.Errorf("failed to add title to catalog_events: %w", err)
+		}
+	}
+
+	if !hasEventYear {
+		logMessage(LogLevelInfo, "Catalog", "Adding year column to catalog_events table")
+		if _, err := CatalogDB.Exec("ALTER TABLE catalog_events ADD COLUMN year TEXT"); err != nil {
+			return fmt.Errorf("failed to add year to catalog_events: %w", err)
 		}
 	}
 
