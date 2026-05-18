@@ -241,7 +241,7 @@ func SendCatalogUpdate() error {
 	catalogSyncMutex.Lock()
 	defer catalogSyncMutex.Unlock()
 
-	url := "https://putio.bramsoft.com/catalogUpdate"
+	url := RemoteServer + "/catalogUpdate"
 
 	// Get catalog data
 	data, err := GetCatalogSyncData()

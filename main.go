@@ -23,6 +23,7 @@ var Jobs []*Item
 var MoviesPath string
 var TVShowPath string
 var PORT string
+var RemoteServer string
 var JobMap map[int64]*Item
 
 // var Interval int64
@@ -305,6 +306,10 @@ func main() {
 	MoviesPath = os.Getenv("MOVIES_PATH")
 	TVShowPath = os.Getenv("TVSHOW_PATH")
 	PORT = os.Getenv("PORT")
+	RemoteServer = os.Getenv("REMOTE_SERVER")
+	if RemoteServer == "" {
+		RemoteServer = "https://putio.bramsoft.com"
+	}
 	Jobs = make([]*Item, 0)
 	JobMap = make(map[int64]*Item)
 
@@ -312,6 +317,7 @@ func main() {
 	logMessage(LogLevelInfo, "Main", "  Movies Path: %s", MoviesPath)
 	logMessage(LogLevelInfo, "Main", "  TV Shows Path: %s", TVShowPath)
 	logMessage(LogLevelInfo, "Main", "  Server Port: %s", PORT)
+	logMessage(LogLevelInfo, "Main", "  Remote Server: %s", RemoteServer)
 
 	// Initialize catalog database
 	if err := InitCatalog(); err != nil {
@@ -469,7 +475,7 @@ func (i *Item) StartDownload() error {
 }
 
 func update(name string) {
-	url := "https://putio.bramsoft.com/update"
+	url := RemoteServer + "/update"
 	method := "POST"
 
 	payload := strings.NewReader(fmt.Sprintf("{\"name\": \"%s\"}", name))
@@ -660,7 +666,7 @@ func GetQueue(ctx context.Context) {
 	for {
 		logMessage(LogLevelInfo, "QueuePoller", "Fetching remote queue...")
 
-		url := "https://putio.bramsoft.com/queue"
+		url := RemoteServer + "/queue"
 		method := "POST"
 
 		req, err := http.NewRequest(method, url, nil)
@@ -819,7 +825,7 @@ func (i *Item) UpdateDownloadPercent(done chan int64, path string, total int64) 
 }
 
 func UpdateQueue(item *Item) {
-	url := "https://putio.bramsoft.com/updateQueue"
+	url := RemoteServer + "/updateQueue"
 	method := "POST"
 
 	arr, err := json.Marshal(item)
