@@ -1,0 +1,145 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>local-dl</Name>
+  <Repository>bharatram1/local-dl:latest</Repository>
+  <Registry>https://hub.docker.com/r/bharatram1/local-dl</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Project>https://github.com/bnandaku/local-dl</Project>
+  <Overview>
+    HTTP service that downloads files from Put.io directly to your Plex/Unraid media directories.&#xD;&#xD;
+    Works alongside putio-go-server: polls for new download jobs every 5 minutes, runs up to 3 concurrent downloads,
+    and automatically organises TV shows into ShowName/Season_XX/ folders with standardised filenames.&#xD;&#xD;
+    Also maintains a local SQLite catalog of all media files and syncs it to putio-go-server for Discord library queries.
+  </Overview>
+  <Category>MediaApp:Other</Category>
+  <WebUI>http://[IP]:[PORT:8080]/ping</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/bnandaku/local-dl/main/unraid/local-dl.xml</TemplateURL>
+  <ExtraParams>--restart=unless-stopped</ExtraParams>
+  <Description>Downloads files from Put.io to your Plex media directories with automatic TV show organisation.</Description>
+
+  <!-- Path mappings -->
+
+  <Config
+    Name="TV Shows Path"
+    Target="/mnt/tvshows"
+    Default="/mnt/user/TV Shows"
+    Mode="rw"
+    Description="Destination on Unraid for TV show files."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">
+    /mnt/user/TV Shows
+  </Config>
+
+  <Config
+    Name="Movies Path"
+    Target="/mnt/movies"
+    Default="/mnt/user/Movies"
+    Mode="rw"
+    Description="Destination on Unraid for movie files."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">
+    /mnt/user/Movies
+  </Config>
+
+  <Config
+    Name="App Data (catalog database)"
+    Target="/data"
+    Default="/mnt/user/appdata/local-dl"
+    Mode="rw"
+    Description="Persistent storage for the SQLite catalog database. Use an appdata path so the catalog survives container updates."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">
+    /mnt/user/appdata/local-dl
+  </Config>
+
+  <!-- Port -->
+
+  <Config
+    Name="Web UI Port"
+    Target="8080"
+    Default="8080"
+    Mode="tcp"
+    Description="Port for the local-dl HTTP API. Used internally by putio-go-server."
+    Type="Port"
+    Display="always"
+    Required="true"
+    Mask="false">
+    8080
+  </Config>
+
+  <!-- Environment variables -->
+
+  <Config
+    Name="TVSHOW_PATH"
+    Target="TVSHOW_PATH"
+    Default="/mnt/tvshows"
+    Mode=""
+    Description="[Do not change] Container path for the TV shows mount."
+    Type="Variable"
+    Display="advanced"
+    Required="true"
+    Mask="false">
+    /mnt/tvshows
+  </Config>
+
+  <Config
+    Name="MOVIES_PATH"
+    Target="MOVIES_PATH"
+    Default="/mnt/movies"
+    Mode=""
+    Description="[Do not change] Container path for the movies mount."
+    Type="Variable"
+    Display="advanced"
+    Required="true"
+    Mask="false">
+    /mnt/movies
+  </Config>
+
+  <Config
+    Name="PORT"
+    Target="PORT"
+    Default="8080"
+    Mode=""
+    Description="HTTP server port (should match the port mapping above)."
+    Type="Variable"
+    Display="advanced"
+    Required="true"
+    Mask="false">
+    8080
+  </Config>
+
+  <Config
+    Name="CATALOG_DB"
+    Target="CATALOG_DB"
+    Default="/data/tvshows_catalog.db"
+    Mode=""
+    Description="[Do not change] Path to the SQLite catalog database inside the container."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">
+    /data/tvshows_catalog.db
+  </Config>
+
+  <Config
+    Name="REMOTE_SERVER"
+    Target="REMOTE_SERVER"
+    Default="https://putio.bramsoft.com"
+    Mode=""
+    Description="URL of your putio-go-server instance. Change this if you are self-hosting."
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false">
+    https://putio.bramsoft.com
+  </Config>
+
+</Container>
