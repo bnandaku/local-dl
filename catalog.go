@@ -41,6 +41,12 @@ func InitCatalog() error {
 		CatalogPath = "./tvshows_catalog.db"
 	}
 
+	if dir := filepath.Dir(CatalogPath); dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create catalog directory: %w", err)
+		}
+	}
+
 	var err error
 	CatalogDB, err = sql.Open("sqlite3", CatalogPath)
 	if err != nil {
