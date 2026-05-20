@@ -303,9 +303,9 @@ func main() {
 	logMessage(LogLevelInfo, "Main", "=== Local Plex Download Manager Starting ===")
 
 	CurrentJobs = make(map[string]*Item)
-	MoviesPath = os.Getenv("MOVIES_PATH")
-	TVShowPath = os.Getenv("TVSHOW_PATH")
-	PORT = os.Getenv("PORT")
+	MoviesPath = "/mnt/movies"
+	TVShowPath = "/mnt/tvshows"
+	PORT = "8080"
 	RemoteServer = os.Getenv("REMOTE_SERVER")
 	if RemoteServer == "" {
 		RemoteServer = "https://putio.bramsoft.com"

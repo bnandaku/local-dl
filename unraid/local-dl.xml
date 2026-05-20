@@ -78,45 +78,6 @@
   <!-- Environment variables -->
 
   <Config
-    Name="TVSHOW_PATH"
-    Target="TVSHOW_PATH"
-    Default="/mnt/tvshows"
-    Mode=""
-    Description="[Do not change] Container path for the TV shows mount."
-    Type="Variable"
-    Display="advanced"
-    Required="true"
-    Mask="false">
-    /mnt/tvshows
-  </Config>
-
-  <Config
-    Name="MOVIES_PATH"
-    Target="MOVIES_PATH"
-    Default="/mnt/movies"
-    Mode=""
-    Description="[Do not change] Container path for the movies mount."
-    Type="Variable"
-    Display="advanced"
-    Required="true"
-    Mask="false">
-    /mnt/movies
-  </Config>
-
-  <Config
-    Name="PORT"
-    Target="PORT"
-    Default="8080"
-    Mode=""
-    Description="HTTP server port (should match the port mapping above)."
-    Type="Variable"
-    Display="advanced"
-    Required="true"
-    Mask="false">
-    8080
-  </Config>
-
-  <Config
     Name="CATALOG_DB"
     Target="CATALOG_DB"
     Default="/data/tvshows_catalog.db"
