@@ -300,27 +300,31 @@ func (p *plexClient) reconcilePlaylist(ctx context.Context, id int64, desired []
 			return nil
 		}
 	}
-	present := make(map[string]bool, len(current))
+	present := make(map[string]int, len(current))
 	for _, item := range current {
-		present[item.RatingKey] = true
+		present[item.RatingKey]++
 	}
 	// Add before deleting so an add failure leaves the prior playlist intact.
 	for _, item := range desired {
-		if !present[item.RatingKey] {
+		if present[item.RatingKey] == 0 {
 			if err := p.addTracks(ctx, id, []PlexTrack{item}); err != nil {
 				return err
 			}
+		} else {
+			present[item.RatingKey]--
 		}
 	}
-	wanted := make(map[string]bool, len(desired))
+	wanted := make(map[string]int, len(desired))
 	for _, item := range desired {
-		wanted[item.RatingKey] = true
+		wanted[item.RatingKey]++
 	}
 	for _, item := range current {
-		if !wanted[item.RatingKey] {
+		if wanted[item.RatingKey] == 0 {
 			if err := p.removeTrack(ctx, id, item); err != nil {
 				return err
 			}
+		} else {
+			wanted[item.RatingKey]--
 		}
 	}
 	current, err = p.playlistItems(ctx, id)
