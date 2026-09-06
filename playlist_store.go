@@ -18,10 +18,11 @@ type PlaylistTrack struct {
 }
 
 type PlaylistManifest struct {
-	Source   string          `json:"source"`
-	SourceID string          `json:"source_id"`
-	Name     string          `json:"name"`
-	Tracks   []PlaylistTrack `json:"tracks"`
+	Source            string          `json:"source"`
+	SourceID          string          `json:"source_id"`
+	Name              string          `json:"name"`
+	SourceUnavailable bool            `json:"source_unavailable,omitempty"`
+	Tracks            []PlaylistTrack `json:"tracks"`
 }
 
 type playlistState struct {
@@ -31,14 +32,20 @@ type playlistState struct {
 }
 
 type PlaylistStatus struct {
-	Source    string    `json:"source"`
-	SourceID  string    `json:"source_id"`
-	Name      string    `json:"name"`
-	Matched   int       `json:"matched"`
-	Missing   int       `json:"missing"`
-	Ambiguous int       `json:"ambiguous"`
-	Error     string    `json:"error,omitempty"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Source    string            `json:"source"`
+	SourceID  string            `json:"source_id"`
+	Name      string            `json:"name"`
+	Matched   int               `json:"matched"`
+	Missing   int               `json:"missing"`
+	Ambiguous int               `json:"ambiguous"`
+	Pending   []PlaylistPending `json:"pending,omitempty"`
+	Error     string            `json:"error,omitempty"`
+	UpdatedAt time.Time         `json:"updated_at"`
+}
+
+type PlaylistPending struct {
+	Index int           `json:"index"`
+	Track PlaylistTrack `json:"track"`
 }
 
 type playlistStore struct {

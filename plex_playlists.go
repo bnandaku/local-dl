@@ -31,14 +31,17 @@ type plexPlaylist struct {
 	Title string
 }
 type plexClient struct {
-	base    string
-	token   string
-	section string
-	http    *http.Client
+	base      string
+	token     string
+	section   string
+	http      *http.Client
+	machineID string
+	machineMu sync.Mutex
 }
 
 type plexXMLContainer struct {
 	Size      int               `xml:"size,attr"`
+	TotalSize int               `xml:"totalSize,attr"`
 	Metadata  []plexXMLMetadata `xml:"Metadata"`
 	Track     []plexXMLMetadata `xml:"Track"`
 	Directory []plexXMLMetadata `xml:"Directory"`
@@ -63,9 +66,6 @@ func (p *plexClient) request(ctx context.Context, method, path string, body io.R
 	if err != nil {
 		return nil, err
 	}
-	q := u.Query()
-	q.Set("X-Plex-Token", p.token)
-	u.RawQuery = q.Encode()
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
 	if err != nil {
 		return nil, err
@@ -109,7 +109,7 @@ func (p *plexClient) tracks(ctx context.Context) ([]PlexTrack, error) {
 			}
 			all = append(all, t)
 		}
-		if len(entries) == 0 || len(all) >= c.Size && c.Size > 0 || len(entries) < 500 {
+		if len(entries) == 0 || len(entries) < 500 || c.TotalSize > 0 && len(all) >= c.TotalSize {
 			break
 		}
 	}
@@ -120,13 +120,13 @@ func (p *plexClient) tracks(ctx context.Context) ([]PlexTrack, error) {
 		}
 		res, e := p.request(ctx, http.MethodGet, "/library/metadata/"+url.PathEscape(track.ParentRatingKey), nil)
 		if e != nil {
-			continue
+			return nil, fmt.Errorf("hydrate album genres: %w", e)
 		}
 		var c plexXMLContainer
 		e = xml.NewDecoder(io.LimitReader(res.Body, 2<<20)).Decode(&c)
 		res.Body.Close()
 		if e != nil {
-			continue
+			return nil, fmt.Errorf("decode album genres: %w", e)
 		}
 		albumEntries := append(c.Metadata, c.Directory...)
 		for _, x := range albumEntries {
@@ -201,30 +201,84 @@ func (p *plexClient) createPlaylist(ctx context.Context, title string, tracks []
 }
 
 func (p *plexClient) playlistItems(ctx context.Context, id int64) ([]PlexTrack, error) {
-	res, err := p.request(ctx, http.MethodGet, fmt.Sprintf("/playlists/%d/items", id), nil)
+	var out []PlexTrack
+	for start := 0; ; start += 500 {
+		res, err := p.request(ctx, http.MethodGet, fmt.Sprintf("/playlists/%d/items?X-Plex-Container-Start=%d&X-Plex-Container-Size=500", id, start), nil)
+		if err != nil {
+			return nil, err
+		}
+		if res.StatusCode/100 != 2 {
+			res.Body.Close()
+			return nil, fmt.Errorf("plex playlist items returned %s", res.Status)
+		}
+		var c plexXMLContainer
+		err = xml.NewDecoder(io.LimitReader(res.Body, 8<<20)).Decode(&c)
+		res.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		entries := append(c.Metadata, c.Track...)
+		for _, x := range entries {
+			out = append(out, PlexTrack{RatingKey: x.RatingKey, PlaylistItemID: x.PlaylistItemID, Title: x.Title, Artist: x.GrandparentTitle, Album: x.ParentTitle, Duration: x.Duration})
+		}
+		if len(entries) == 0 || len(entries) < 500 || c.TotalSize > 0 && len(out) >= c.TotalSize {
+			return out, nil
+		}
+	}
+}
+
+func (p *plexClient) machineIdentifier(ctx context.Context) (string, error) {
+	res, err := p.request(ctx, http.MethodGet, "/identity", nil)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	defer res.Body.Close()
 	if res.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("playlist items returned %s", res.Status)
+		return "", fmt.Errorf("plex identity returned %s", res.Status)
 	}
-	var c plexXMLContainer
-	if err := xml.NewDecoder(io.LimitReader(res.Body, 8<<20)).Decode(&c); err != nil {
-		return nil, err
+	var c struct {
+		Machine string `xml:"machineIdentifier,attr"`
 	}
-	entries := append(c.Metadata, c.Track...)
-	out := make([]PlexTrack, 0, len(entries))
-	for _, x := range entries {
-		out = append(out, PlexTrack{RatingKey: x.RatingKey, PlaylistItemID: x.PlaylistItemID, Title: x.Title, Artist: x.GrandparentTitle, Album: x.ParentTitle, Duration: x.Duration})
+	if err := xml.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&c); err != nil {
+		return "", err
 	}
-	return out, nil
+	if c.Machine == "" {
+		return "", fmt.Errorf("plex identity missing machine identifier")
+	}
+	return c.Machine, nil
+}
+
+func (p *plexClient) serverID(ctx context.Context) (string, error) {
+	p.machineMu.Lock()
+	defer p.machineMu.Unlock()
+	if p.machineID != "" {
+		return p.machineID, nil
+	}
+	id, err := p.machineIdentifier(ctx)
+	if err != nil {
+		return "", err
+	}
+	p.machineID = id
+	return id, nil
+}
+
+func (p *plexClient) refresh(ctx context.Context) error {
+	res, err := p.request(ctx, http.MethodGet, "/library/sections/"+url.PathEscape(p.section)+"/refresh", nil)
+	if err != nil {
+		return err
+	}
+	io.Copy(io.Discard, io.LimitReader(res.Body, 1<<20))
+	res.Body.Close()
+	if res.StatusCode/100 != 2 {
+		return fmt.Errorf("plex refresh returned %s", res.Status)
+	}
+	return nil
 }
 
 func (p *plexClient) addTracks(ctx context.Context, id int64, tracks []PlexTrack) error {
-	machine := os.Getenv("PLEX_MACHINE_IDENTIFIER")
-	if machine == "" {
-		machine = "local"
+	machine, err := p.serverID(ctx)
+	if err != nil {
+		return err
 	}
 	for _, t := range tracks {
 		path := fmt.Sprintf("/playlists/%d/items?uri=%s", id, url.QueryEscape("server://"+machine+"/com.plexapp.plugins.library/library/metadata/"+t.RatingKey))
@@ -453,32 +507,51 @@ func TriggerMusicSync() {
 func (m *playlistManager) reconcile() {
 	ctx, cancel := context.WithTimeout(m.ctx, 45*time.Second)
 	defer cancel()
+	_ = m.client.refresh(ctx)
 	library, err := m.client.tracks(ctx)
 	if err != nil {
 		return
 	}
 	state := m.store.snapshot()
 	for _, manifest := range state.Manifests {
+		manifestErr := error(nil)
+		if manifest.SourceUnavailable {
+			continue
+		}
 		matched, pending, amb := matchPlaylistTracks(manifest.Tracks, library)
 		key := playlistKey(manifest)
-		st := PlaylistStatus{Source: manifest.Source, SourceID: manifest.SourceID, Name: manifest.Name, Matched: len(matched), Missing: len(pending), Ambiguous: amb, UpdatedAt: time.Now()}
+		pendingOut := make([]PlaylistPending, 0, len(pending))
+		usedPending := make([]bool, len(pending))
+		for i, track := range manifest.Tracks {
+			for j, p := range pending {
+				if !usedPending[j] && normalizePlaylistText(track.Title) == normalizePlaylistText(p.Title) && normalizePlaylistText(track.Artist) == normalizePlaylistText(p.Artist) {
+					pendingOut = append(pendingOut, PlaylistPending{Index: i, Track: track})
+					usedPending[j] = true
+					break
+				}
+			}
+		}
+		st := PlaylistStatus{Source: manifest.Source, SourceID: manifest.SourceID, Name: manifest.Name, Matched: len(matched), Missing: len(pending), Ambiguous: amb, Pending: pendingOut, UpdatedAt: time.Now()}
 		if len(matched) > 0 {
 			id := m.store.snapshot().Owned[key]
 			if id == 0 {
-				id, err = m.client.createPlaylist(ctx, manifest.Name, matched)
-				if err == nil {
+				id, manifestErr = m.client.createPlaylist(ctx, manifest.Name, matched)
+				if manifestErr == nil {
 					m.store.mu.Lock()
 					m.store.state.Owned[key] = id
-					_ = m.store.saveLocked()
+					manifestErr = m.store.saveLocked()
+					if manifestErr != nil {
+						delete(m.store.state.Owned, key)
+					}
 					m.store.mu.Unlock()
 				}
 			}
-			if err == nil {
-				err = m.client.reconcilePlaylist(ctx, id, matched)
+			if manifestErr == nil {
+				manifestErr = m.client.reconcilePlaylist(ctx, id, matched)
 			}
 		}
-		if err != nil {
-			st.Error = err.Error()
+		if manifestErr != nil {
+			st.Error = manifestErr.Error()
 		}
 		m.store.mu.Lock()
 		m.store.state.Status[key] = st
@@ -504,7 +577,10 @@ func (m *playlistManager) reconcile() {
 			if e == nil {
 				m.store.mu.Lock()
 				m.store.state.Owned[key] = id
-				_ = m.store.saveLocked()
+				e = m.store.saveLocked()
+				if e != nil {
+					delete(m.store.state.Owned, key)
+				}
 				m.store.mu.Unlock()
 			}
 		}
