@@ -16,8 +16,8 @@ Scope: New put.io music downloads reach genre/artist/album folders safely; manag
   CHECK: go test -race -count=1 ./...
   EXPECT: ok
   EVIDENCE: 2026-09-06 full Go race suite passed; ingest failure/restart, playlist ordering/ownership, pagination and matching covered.
-- [ ] G4: Container configuration includes music mount, ffprobe, persistent manifests, secret-safe Plex settings; rollout and rollback documented and live health verified if deployed.
-  EVIDENCE: final Docker image built; scripts/smoke_music_container.py passed an authenticated audio download with exact bytes and genre/album destination. Live rollout pending.
+- [x] G4: Container configuration includes music mount, ffprobe, persistent manifests, secret-safe Plex settings; rollout and rollback documented and live health verified if deployed.
+  EVIDENCE: final Docker image built; scripts/smoke_music_container.py passed an authenticated audio download with exact bytes and genre/album destination. Live rollout passed: /ping, authenticated playlist status, unauthenticated 401, correct music mount and ffprobe. Plex created owned Rock playlist 11336; all five original personal playlist IDs remain. Old downloader retained stopped for rollback.
 - [x] G5: Spotify/Tidal recreation has a documented working import path and source access gaps are explicit; existing music and personal playlists stay untouched.
   EVIDENCE: 10 Python importer tests passed. Live Tidal classic rock export returned 20 ordered tracks; Starred returned all 718. Spotify import supports token or export; actual Spotify account access and source selection remain user testing inputs.
 

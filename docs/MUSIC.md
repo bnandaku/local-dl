@@ -82,3 +82,23 @@ old container's original name, and start it. Existing audio and manifests remain
 on /mnt/user/media; the old version cannot process new music jobs safely, so pause
 music acquisition until the new version is restored. Do not delete playlist
 ownership state: it is how the service distinguishes its playlists from yours.
+
+## Deployment record — 2026-09-06
+
+The downloader runs `local-dl:music-20260906` on peaches-unraid, built from
+implementation commit `25ffe62` (subsequent documentation-only commit records
+verification). Its previous container is retained stopped as
+`downloader-local-dl-rollback-music-20260906`. Both Unraid templates were updated
+and backed up with `.pre-music-20260906` suffixes. The music API credential is
+stored privately at `/mnt/user/media/data/music-api.env` on Unraid.
+
+Live checks confirmed health, authenticated status, rejection without credentials,
+ffprobe, the music mount, and creation of the managed Rock playlist. All five
+preexisting personal playlist IDs were preserved. The current companion image
+`bharatram1/putiobot:67992d1` already contains the complete music routing, file size,
+and timer-removal patch; its deployed source passed the exact reverse-patch check
+and has no differences from that commit in the three affected files.
+
+No Spotify/Tidal source manifests have been imported into production yet. Choose
+source playlists for the first user test; Tidal bridge access was verified, and
+Spotify needs an export or authorized access token.
