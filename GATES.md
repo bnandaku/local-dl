@@ -22,3 +22,12 @@ Scope: New put.io music downloads reach genre/artist/album folders safely; manag
   EVIDENCE: 10 Python importer tests passed. Live Tidal classic rock export returned 20 ordered tracks; Starred returned all 718. Spotify import supports token or export; actual Spotify account access and source selection remain user testing inputs.
 
 Checks are run directly under the user's implementation authorization; this ledger records results, not executable approval delegation.
+
+## Media hygiene follow-up — 2026-09-06
+
+- [x] Audio/video routing overrides incorrect labels; spaced/dotted episode markers and parent context force TV; unknown extensions rejected before download.
+- [x] Supporting media waits for a verified primary receipt and follows its actual destination; invalid HTTP/error payloads cannot publish or acknowledge.
+- [x] Main and companion Go race suites and vet passed. Python suite: 22 tests passed. Built container audio smoke passed; final live garbage request returned 400 without enqueueing.
+- [x] All 4,556 existing files audited, including primary stream probes and artwork/error-payload checks. Quarantined 157 confirmed Put.io error responses, zero scan errors/timeouts. Repaired the Lilo & Stitch episode from Movies to TV with recovery copy.
+- [x] Follow-up inventory: 4,399 files, zero unknown extensions, zero misplaced media. All three Plex library refresh requests accepted. Personal playlists preserved.
+- [x] Downloader and companion committed, pushed, deployed and healthy; prior containers and configuration backups retained. Full report lives privately under reports/ and on Unraid /mnt/user/media/data/media-hygiene-report-20260906.json.

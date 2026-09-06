@@ -43,3 +43,27 @@ This offline command validates content, publishes into the correct library using
 the normal naming rules, saves a recovery copy and manifest under
 `/data/media-quarantine`, and only then removes the misplaced source. It sends no
 Put.io acknowledgement. Do not run it concurrently with downloader state writes.
+
+## Verified deployment — 2026-09-06
+
+Downloader image: `local-dl:media-policy-20260906`, runtime implementation through
+`dc247fe`. Companion image: `bharatram1/putiobot:media-policy-20260906`, commit
+`6f3a261`. Both were pushed to their repositories' main branches and deployed;
+the downloader's Unraid templates and the companion's Compose image setting were
+updated. Prior containers/configurations are retained for rollback.
+
+The existing-library audit examined 4,556 files. It quarantined 157 confirmed
+Put.io error responses disguised as media: 130 audio/video files and 27 artwork
+or subtitle files. All were 186 bytes. No probe errors or timeouts occurred.
+One valid Lilo & Stitch episode moved from Movies to TV with a recovery copy.
+The supposed Taylor Swift MP3 in TV was one of the error responses, not audio.
+
+Follow-up inventory found 4,399 files with zero unknown extensions or misplaced
+media. All three Plex libraries were refreshed; personal playlists remain intact.
+The audit validates stream types and known error payloads, not full playback of
+every frame. The quarantined titles were not automatically reacquired.
+
+Report: `/mnt/user/media/data/media-hygiene-report-20260906.json` on Unraid.
+Quarantine: `/mnt/user/media/.local-dl-quarantine/20260906T204222Z`, with an
+fsynced `manifest.json` recording original paths. Episode repair recovery:
+`/mnt/user/media/data/media-quarantine/20260906T202852.986391699/`.
