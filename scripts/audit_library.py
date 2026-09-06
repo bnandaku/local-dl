@@ -275,10 +275,12 @@ def audit_library(root, apply=False, report=None, probe=False):
                             if error is None:
                                 counts["quarantined"] += 1
                                 journal[-1]["status"] = "moved"
+                                rec["status"] = "moved"
                             else:
                                 counts["errors"] += 1
                                 rec["error"] = error
                                 journal[-1]["status"] = "error"
+                                rec["status"] = "error"
                                 journal[-1]["error"] = error
                             persist_journal()
                         records.append(rec)
@@ -322,10 +324,12 @@ def audit_library(root, apply=False, report=None, probe=False):
                         if error is None:
                             counts["quarantined"] += 1
                             journal[-1]["status"] = "moved"
+                            rec["status"] = "moved"
                         else:
                             counts["errors"] += 1
                             rec["error"] = error
                             journal[-1]["status"] = "error"
+                            rec["status"] = "error"
                             journal[-1]["error"] = error
                         persist_journal()
                     records.append(rec)
