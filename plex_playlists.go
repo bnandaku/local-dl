@@ -17,12 +17,14 @@ import (
 )
 
 type PlexTrack struct {
-	RatingKey string
-	Title     string
-	Artist    string
-	Album     string
-	Duration  int64
-	Genres    []string
+	RatingKey       string
+	ParentRatingKey string
+	PlaylistItemID  string
+	Title           string
+	Artist          string
+	Album           string
+	Duration        int64
+	Genres          []string
 }
 type plexPlaylist struct {
 	ID    int64
@@ -36,13 +38,18 @@ type plexClient struct {
 }
 
 type plexXMLContainer struct {
-	Size     int               `xml:"size,attr"`
-	Metadata []plexXMLMetadata `xml:"Metadata"`
+	Size      int               `xml:"size,attr"`
+	Metadata  []plexXMLMetadata `xml:"Metadata"`
+	Track     []plexXMLMetadata `xml:"Track"`
+	Directory []plexXMLMetadata `xml:"Directory"`
+	Playlist  []plexXMLMetadata `xml:"Playlist"`
 }
 type plexXMLMetadata struct {
 	RatingKey        string `xml:"ratingKey,attr"`
 	Title            string `xml:"title,attr"`
 	ParentTitle      string `xml:"parentTitle,attr"`
+	ParentRatingKey  string `xml:"parentRatingKey,attr"`
+	PlaylistItemID   string `xml:"playlistItemID,attr"`
 	GrandparentTitle string `xml:"grandparentTitle,attr"`
 	Duration         int64  `xml:"duration,attr"`
 	Genre            []struct {
@@ -94,15 +101,43 @@ func (p *plexClient) tracks(ctx context.Context) ([]PlexTrack, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, x := range c.Metadata {
-			t := PlexTrack{RatingKey: x.RatingKey, Title: x.Title, Artist: x.GrandparentTitle, Album: x.ParentTitle, Duration: x.Duration}
+		entries := append(c.Metadata, c.Track...)
+		for _, x := range entries {
+			t := PlexTrack{RatingKey: x.RatingKey, ParentRatingKey: x.ParentRatingKey, Title: x.Title, Artist: x.GrandparentTitle, Album: x.ParentTitle, Duration: x.Duration}
 			for _, g := range x.Genre {
 				t.Genres = append(t.Genres, g.Tag)
 			}
 			all = append(all, t)
 		}
-		if len(c.Metadata) == 0 || len(all) >= c.Size && c.Size > 0 || len(c.Metadata) < 500 {
+		if len(entries) == 0 || len(all) >= c.Size && c.Size > 0 || len(entries) < 500 {
 			break
+		}
+	}
+	albumGenres := make(map[string][]string)
+	for _, track := range all {
+		if track.ParentRatingKey == "" || len(track.Genres) != 0 || albumGenres[track.ParentRatingKey] != nil {
+			continue
+		}
+		res, e := p.request(ctx, http.MethodGet, "/library/metadata/"+url.PathEscape(track.ParentRatingKey), nil)
+		if e != nil {
+			continue
+		}
+		var c plexXMLContainer
+		e = xml.NewDecoder(io.LimitReader(res.Body, 2<<20)).Decode(&c)
+		res.Body.Close()
+		if e != nil {
+			continue
+		}
+		albumEntries := append(c.Metadata, c.Directory...)
+		for _, x := range albumEntries {
+			for _, g := range x.Genre {
+				albumGenres[track.ParentRatingKey] = append(albumGenres[track.ParentRatingKey], g.Tag)
+			}
+		}
+	}
+	for i := range all {
+		if len(all[i].Genres) == 0 {
+			all[i].Genres = albumGenres[all[i].ParentRatingKey]
 		}
 	}
 	return all, nil
@@ -122,7 +157,8 @@ func (p *plexClient) playlists(ctx context.Context) ([]plexPlaylist, error) {
 		return nil, err
 	}
 	out := make([]plexPlaylist, 0, len(c.Metadata))
-	for _, x := range c.Metadata {
+	entries := append(c.Metadata, c.Playlist...)
+	for _, x := range entries {
 		if x.PlaylistType == "audio" || x.PlaylistType == "" {
 			id, _ := strconv.ParseInt(x.RatingKey, 10, 64)
 			out = append(out, plexPlaylist{ID: id, Title: x.Title})
@@ -131,8 +167,20 @@ func (p *plexClient) playlists(ctx context.Context) ([]plexPlaylist, error) {
 	return out, nil
 }
 
-func (p *plexClient) createPlaylist(ctx context.Context, title string) (int64, error) {
-	form := url.Values{"title": {title}, "type": {"audio"}}
+func (p *plexClient) createPlaylist(ctx context.Context, title string, tracks []PlexTrack) (int64, error) {
+	if len(tracks) == 0 {
+		return 0, fmt.Errorf("cannot create empty playlist")
+	}
+	keys := make([]string, 0, len(tracks))
+	for _, t := range tracks {
+		keys = append(keys, t.RatingKey)
+	}
+	machine := os.Getenv("PLEX_MACHINE_IDENTIFIER")
+	if machine == "" {
+		machine = "local"
+	}
+	uri := "server://" + machine + "/com.plexapp.plugins.library/library/metadata/" + strings.Join(keys, ",")
+	form := url.Values{"title": {title}, "type": {"audio"}, "smart": {"0"}, "uri": {uri}}
 	res, err := p.request(ctx, http.MethodPost, "/playlists?"+form.Encode(), nil)
 	if err != nil {
 		return 0, err
@@ -145,10 +193,11 @@ func (p *plexClient) createPlaylist(ctx context.Context, title string) (int64, e
 	if err := xml.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&c); err != nil {
 		return 0, err
 	}
-	if len(c.Metadata) == 0 {
+	entries := append(c.Metadata, c.Playlist...)
+	if len(entries) == 0 {
 		return 0, fmt.Errorf("plex create returned no playlist")
 	}
-	return strconv.ParseInt(c.Metadata[0].RatingKey, 10, 64)
+	return strconv.ParseInt(entries[0].RatingKey, 10, 64)
 }
 
 func (p *plexClient) playlistItems(ctx context.Context, id int64) ([]PlexTrack, error) {
@@ -164,16 +213,21 @@ func (p *plexClient) playlistItems(ctx context.Context, id int64) ([]PlexTrack, 
 	if err := xml.NewDecoder(io.LimitReader(res.Body, 8<<20)).Decode(&c); err != nil {
 		return nil, err
 	}
-	out := make([]PlexTrack, 0, len(c.Metadata))
-	for _, x := range c.Metadata {
-		out = append(out, PlexTrack{RatingKey: x.RatingKey, Title: x.Title, Artist: x.GrandparentTitle, Album: x.ParentTitle, Duration: x.Duration})
+	entries := append(c.Metadata, c.Track...)
+	out := make([]PlexTrack, 0, len(entries))
+	for _, x := range entries {
+		out = append(out, PlexTrack{RatingKey: x.RatingKey, PlaylistItemID: x.PlaylistItemID, Title: x.Title, Artist: x.GrandparentTitle, Album: x.ParentTitle, Duration: x.Duration})
 	}
 	return out, nil
 }
 
 func (p *plexClient) addTracks(ctx context.Context, id int64, tracks []PlexTrack) error {
+	machine := os.Getenv("PLEX_MACHINE_IDENTIFIER")
+	if machine == "" {
+		machine = "local"
+	}
 	for _, t := range tracks {
-		path := fmt.Sprintf("/playlists/%d/items?uri=%s", id, url.QueryEscape("server://local/com.plexapp.plugins.library/library/metadata/"+t.RatingKey))
+		path := fmt.Sprintf("/playlists/%d/items?uri=%s", id, url.QueryEscape("server://"+machine+"/com.plexapp.plugins.library/library/metadata/"+t.RatingKey))
 		res, err := p.request(ctx, http.MethodPut, path, nil)
 		if err != nil {
 			return err
@@ -188,7 +242,11 @@ func (p *plexClient) addTracks(ctx context.Context, id int64, tracks []PlexTrack
 }
 
 func (p *plexClient) removeTrack(ctx context.Context, id int64, item PlexTrack) error {
-	res, err := p.request(ctx, http.MethodDelete, fmt.Sprintf("/playlists/%d/items/%s", id, url.PathEscape(item.RatingKey)), nil)
+	itemID := item.PlaylistItemID
+	if itemID == "" {
+		itemID = item.RatingKey
+	}
+	res, err := p.request(ctx, http.MethodDelete, fmt.Sprintf("/playlists/%d/items/%s", id, url.PathEscape(itemID)), nil)
 	if err != nil {
 		return err
 	}
@@ -196,6 +254,31 @@ func (p *plexClient) removeTrack(ctx context.Context, id int64, item PlexTrack) 
 	res.Body.Close()
 	if res.StatusCode/100 != 2 {
 		return fmt.Errorf("remove playlist item returned %s", res.Status)
+	}
+	return nil
+}
+
+func (p *plexClient) moveTrack(ctx context.Context, id int64, item PlexTrack, after *PlexTrack) error {
+	itemID := item.PlaylistItemID
+	if itemID == "" {
+		itemID = item.RatingKey
+	}
+	path := fmt.Sprintf("/playlists/%d/items/%s/move", id, url.PathEscape(itemID))
+	if after != nil {
+		afterID := after.PlaylistItemID
+		if afterID == "" {
+			afterID = after.RatingKey
+		}
+		path += "?after=" + url.QueryEscape(afterID)
+	}
+	res, err := p.request(ctx, http.MethodPut, path, nil)
+	if err != nil {
+		return err
+	}
+	io.Copy(io.Discard, io.LimitReader(res.Body, 1<<20))
+	res.Body.Close()
+	if res.StatusCode/100 != 2 {
+		return fmt.Errorf("move playlist item returned %s", res.Status)
 	}
 	return nil
 }
@@ -238,6 +321,39 @@ func (p *plexClient) reconcilePlaylist(ctx context.Context, id int64, desired []
 			if err := p.removeTrack(ctx, id, item); err != nil {
 				return err
 			}
+		}
+	}
+	current, err = p.playlistItems(ctx, id)
+	if err != nil {
+		return err
+	}
+	for i, want := range desired {
+		if i < len(current) && current[i].RatingKey == want.RatingKey {
+			continue
+		}
+		at := -1
+		for j := i + 1; j < len(current); j++ {
+			if current[j].RatingKey == want.RatingKey {
+				at = j
+				break
+			}
+		}
+		if at < 0 {
+			continue
+		}
+		var after *PlexTrack
+		if i > 0 {
+			after = &current[i-1]
+		}
+		if err := p.moveTrack(ctx, id, current[at], after); err != nil {
+			return err
+		}
+		item := current[at]
+		current = append(current[:at], current[at+1:]...)
+		if i >= len(current) {
+			current = append(current, item)
+		} else {
+			current = append(current[:i], append([]PlexTrack{item}, current[i:]...)...)
 		}
 	}
 	return nil
@@ -345,7 +461,7 @@ func (m *playlistManager) reconcile() {
 		if len(matched) > 0 {
 			id := m.store.snapshot().Owned[key]
 			if id == 0 {
-				id, err = m.client.createPlaylist(ctx, manifest.Name)
+				id, err = m.client.createPlaylist(ctx, manifest.Name, matched)
 				if err == nil {
 					m.store.mu.Lock()
 					m.store.state.Owned[key] = id
@@ -380,7 +496,7 @@ func (m *playlistManager) reconcile() {
 		id := state.Owned[key]
 		var e error
 		if id == 0 {
-			id, e = m.client.createPlaylist(ctx, "Genre — "+genre)
+			id, e = m.client.createPlaylist(ctx, "Genre — "+genre, tracks)
 			if e == nil {
 				m.store.mu.Lock()
 				m.store.state.Owned[key] = id

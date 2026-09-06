@@ -65,6 +65,30 @@ func TestMusicAuthRejectsMissingOrWrongBearer(t *testing.T) {
 	}
 }
 
+func TestPlexClientMovesExistingItemsIntoSourceOrder(t *testing.T) {
+	var moves []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/playlists/7/items" && r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`<MediaContainer><Track ratingKey="2" playlistItemID="p2"/><Track ratingKey="1" playlistItemID="p1"/></MediaContainer>`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/move") {
+			moves = append(moves, r.URL.Path+"?"+r.URL.RawQuery)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	p := &plexClient{base: srv.URL, token: "secret", section: "1", http: srv.Client()}
+	err := p.reconcilePlaylist(context.Background(), 7, []PlexTrack{{RatingKey: "1"}, {RatingKey: "2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(moves) != 1 || !strings.Contains(moves[0], "/playlists/7/items/p1/move") || strings.Contains(moves[0], "after=") {
+		t.Fatalf("moves=%v", moves)
+	}
+}
+
 // Tiny adapter keeps this test independent of a running Gin engine.
 func ginTestContext(w *httptest.ResponseRecorder, req *http.Request) *gin.Context {
 	c, _ := gin.CreateTestContext(w)

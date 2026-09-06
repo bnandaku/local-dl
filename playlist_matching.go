@@ -7,11 +7,10 @@ func normalizePlaylistText(s string) string {
 }
 
 func matchPlaylistTracks(source []PlaylistTrack, library []PlexTrack) (matched []PlexTrack, pending []PlaylistTrack, ambiguous int) {
-	used := make(map[string]bool)
 	for _, want := range source {
 		var candidates []PlexTrack
 		for _, have := range library {
-			if used[have.RatingKey] || normalizePlaylistText(want.Title) != normalizePlaylistText(have.Title) || normalizePlaylistText(want.Artist) != normalizePlaylistText(have.Artist) {
+			if normalizePlaylistText(want.Title) != normalizePlaylistText(have.Title) || normalizePlaylistText(want.Artist) != normalizePlaylistText(have.Artist) {
 				continue
 			}
 			if want.Album != "" && have.Album != "" && normalizePlaylistText(want.Album) != normalizePlaylistText(have.Album) {
@@ -29,7 +28,6 @@ func matchPlaylistTracks(source []PlaylistTrack, library []PlexTrack) (matched [
 			}
 			continue
 		}
-		used[candidates[0].RatingKey] = true
 		matched = append(matched, candidates[0])
 	}
 	return

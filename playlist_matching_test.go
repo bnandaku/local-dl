@@ -32,3 +32,12 @@ func TestMatchTracksLeavesAmbiguousMatchesPending(t *testing.T) {
 		t.Fatalf("got=%#v pending=%#v ambiguous=%d", got, pending, ambiguous)
 	}
 }
+
+func TestMatchTracksPreservesDuplicateSourceOccurrences(t *testing.T) {
+	source := []PlaylistTrack{{Title: "Song", Artist: "Band"}, {Title: "Song", Artist: "Band"}}
+	library := []PlexTrack{{RatingKey: "1", Title: "Song", Artist: "Band"}}
+	got, pending, ambiguous := matchPlaylistTracks(source, library)
+	if len(got) != 2 || len(pending) != 0 || ambiguous != 0 {
+		t.Fatalf("got=%#v pending=%#v ambiguous=%d", got, pending, ambiguous)
+	}
+}
