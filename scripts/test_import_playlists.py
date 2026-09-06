@@ -2,6 +2,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -16,6 +17,7 @@ from import_playlists import (
     fetch_tidal_playlist,
     publish_manifest,
 )
+import import_playlists
 
 
 class _Server(BaseHTTPRequestHandler):
@@ -72,6 +74,44 @@ class ImportPlaylistTests(unittest.TestCase):
         result = parse_spotify_csv(csv_data)[0]
         self.assertEqual(result["name"], "Road")
         self.assertEqual(result["tracks"][0]["artist"], "One")
+        self.assertIsInstance(result["tracks"][0]["duration_ms"], int)
+
+    def test_spotify_documented_url_and_bare_id_inputs(self):
+        original = import_playlists._json_request
+        calls = []
+        def fake(url, headers=None, method="GET", body=None):
+            calls.append(url)
+            if url.endswith("/items"):
+                return {"items": [], "next": None}
+            return {"name": "S"}
+        import_playlists._json_request = fake
+        try:
+            self.assertEqual(fetch_spotify_playlist("https://open.spotify.com/playlist/abc123", "t")["source_id"], "abc123")
+            self.assertEqual(fetch_spotify_playlist("abc123", "t")["source_id"], "abc123")
+        finally:
+            import_playlists._json_request = original
+        self.assertTrue(all("abc123" in url for url in calls))
+
+    def test_spotify_requires_token_before_request(self):
+        with self.assertRaises(ValueError):
+            fetch_spotify_playlist("abc123", "")
+
+    def test_spotify_current_item_wrapper(self):
+        original = import_playlists._json_request
+        import_playlists._json_request = lambda url, headers=None, method="GET", body=None: (
+            {"name": "S"} if not url.endswith("/items") else {"items": [
+                {"item": {"name": "A", "artists": [{"name": "O"}], "album": {"name": "X"}}}
+            ]})
+        try:
+            result = fetch_spotify_playlist("https://api.spotify.com/v1/playlists/x", "token")
+        finally:
+            import_playlists._json_request = original
+        self.assertEqual(result["tracks"][0]["title"], "A")
+
+    def test_pagination_cycle_is_bounded(self):
+        _Server.routes["/v1/playlists/x"] = (200, {"name": "S", "tracks": {"items": [], "next": self.base + "/v1/playlists/x"}})
+        with self.assertRaises(ValueError):
+            fetch_spotify_playlist(self.base + "/v1/playlists/x", "token")
 
     def test_tidal_fetch_maps_tracks(self):
         _Server.routes["/api/tidal/playlists/7"] = (200, {"id": "7", "name": "Tidal", "tracks": [

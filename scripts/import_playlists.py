@@ -12,10 +12,19 @@ import re
 import sys
 from urllib.error import HTTPError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 TIMEOUT_SECONDS = 20
+MAX_PAGES = 1000
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = build_opener(_NoRedirect)
 
 
 def _json_request(url, headers=None, method="GET", body=None):
@@ -26,7 +35,7 @@ def _json_request(url, headers=None, method="GET", body=None):
     if body is not None:
         request.data = json.dumps(body).encode("utf-8")
         request.add_header("Content-Type", "application/json")
-    with urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+    with _OPENER.open(request, timeout=TIMEOUT_SECONDS) as response:
         data = response.read(MAX_RESPONSE_BYTES + 1)
         if len(data) > MAX_RESPONSE_BYTES:
             raise ValueError("source response exceeds %d bytes" % MAX_RESPONSE_BYTES)
@@ -51,12 +60,20 @@ def build_manifest(source, source_id, name, tracks):
         raise ValueError("source must be spotify, tidal, or manual")
     normalized = []
     for item in tracks:
-        normalized.append(_track(item.get("title"), item.get("artist"), item.get("album"), item.get("isrc"), item.get("duration_ms"), item.get("unavailable", False)))
+        duration = item.get("duration_ms")
+        try:
+            duration = int(duration or 0)
+        except (TypeError, ValueError):
+            duration = 0
+        normalized.append(_track(item.get("title"), item.get("artist"), item.get("album"), item.get("isrc"), duration, item.get("unavailable", False)))
     return {"source": source, "source_id": str(source_id or ""), "name": name or "Unnamed", "tracks": normalized}
 
 
 def _spotify_item(item):
-    track = item.get("track") if isinstance(item, dict) and "track" in item else item
+    if isinstance(item, dict) and "item" in item:
+        track = item.get("item")
+    else:
+        track = item.get("track") if isinstance(item, dict) and "track" in item else item
     if not isinstance(track, dict):
         return _track(unavailable=True)
     artists = track.get("artists") or []
@@ -73,7 +90,7 @@ def parse_spotify_export(payload):
         raise ValueError("Spotify export must contain a playlists array")
     result = []
     for playlist in playlists:
-        items = playlist.get("items", [])
+        items = playlist.get("items")
         # Some Spotify export variants call this field tracks.
         if not isinstance(items, list):
             items = playlist.get("tracks", [])
@@ -110,35 +127,50 @@ def fetch_tidal_playlist(bridge_url, playlist_id):
 
 def _spotify_url(value):
     match = re.search(r"playlist[/:]([A-Za-z0-9]+)", value)
+    if not match and re.fullmatch(r"[A-Za-z0-9]+", value):
+        return "https://api.spotify.com/v1/playlists/" + value
     if not match:
         raise ValueError("could not find Spotify playlist ID")
     return "https://api.spotify.com/v1/playlists/" + match.group(1)
 
 
 def fetch_spotify_playlist(value, token):
-    initial = _spotify_url(value) if not value.startswith("http") else value
+    if not token:
+        raise ValueError("SPOTIFY_ACCESS_TOKEN is required for Spotify API imports")
+    initial = value if value.startswith("https://api.spotify.com/") else _spotify_url(value)
     parsed = urlparse(initial)
     if parsed.netloc != "api.spotify.com" or not parsed.path.startswith("/v1/playlists/"):
         raise ValueError("Spotify URL must use api.spotify.com/v1/playlists")
     headers = {"Authorization": "Bearer " + token}
     payload = _json_request(initial, headers)
     tracks = []
+    seen_urls = set()
     # Spotify's current API separates playlist metadata from its items. Keep
     # compatibility with older responses that embed tracks in the metadata.
     if not isinstance(payload.get("items"), list) and not isinstance((payload.get("tracks") or {}).get("items"), list):
-        page = _json_request(initial.rstrip("/") + "/items", headers)
+        current_url = initial.rstrip("/") + "/items"
+        page = _json_request(current_url, headers)
     else:
+        current_url = initial
         page = payload
     while True:
+        if len(seen_urls) >= MAX_PAGES:
+            raise ValueError("Spotify playlist pagination exceeds %d pages" % MAX_PAGES)
+        if current_url in seen_urls:
+            raise ValueError("Spotify pagination cycle detected")
+        seen_urls.add(current_url)
         container = page.get("items") if isinstance(page.get("items"), list) else page.get("tracks", {}).get("items", [])
         tracks.extend(_spotify_item(item) for item in container)
         next_url = page.get("next") if "items" in page else (page.get("tracks") or {}).get("next")
         if not next_url:
             break
+        if next_url in seen_urls:
+            raise ValueError("Spotify pagination cycle detected")
         next_parsed = urlparse(next_url)
         if next_parsed.scheme != "https" or next_parsed.netloc != "api.spotify.com" or not next_parsed.path.startswith("/v1/"):
             raise ValueError("Spotify pagination URL is outside api.spotify.com")
-        page = _json_request(next_url, headers)
+        current_url = next_url
+        page = _json_request(current_url, headers)
     playlist_id = initial.rstrip("/").split("/")[-1]
     return build_manifest("spotify", playlist_id, payload.get("name", "Spotify playlist"), tracks)
 

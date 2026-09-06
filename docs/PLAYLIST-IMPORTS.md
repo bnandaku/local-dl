@@ -59,7 +59,3 @@ The CSV reader groups rows by `Playlist` and accepts common export columns
 manifest before publishing it. HTTP failures, malformed JSON, oversized
 responses, missing source playlists, and unsafe pagination links abort the
 operation; publishing happens only after a complete source read.
-
-Spotify's developer policy also prohibits using the Web API to facilitate
-downloads or stream ripping. This importer uses Spotify only as playlist
-metadata input; acquisition must use a separately authorized source.
