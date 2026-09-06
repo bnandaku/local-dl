@@ -69,8 +69,27 @@ func TestSupportDestinations(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	side := Item{Name: "Show.S01 E02.en.srt", MediaName: primary.Name, Type: Movies}
+	side := Item{Name: "Show.S01 E02.en.srt", MediaName: primary.Name, MediaFileID: 7, Type: Movies}
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	t.Setenv("MUSIC_STATE_PATH", statePath)
 	if e := routeMedia(&side); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := mediaDestination(&side); e == nil {
+		t.Fatal("support published without primary")
+	}
+	os.MkdirAll(filepath.Dir(want), 0755)
+	os.WriteFile(want, []byte("verified primary fixture"), 0644)
+	digest, e := musicFileDigest(want)
+	if e != nil {
+		t.Fatal(e)
+	}
+	state, e := readMusicState(statePath)
+	if e != nil {
+		t.Fatal(e)
+	}
+	state.Receipts["7"] = musicImportRecord{Type: TVShow, FileID: 7, Name: primary.Name, Path: want, SHA256: digest}
+	if e = saveMusicState(statePath, state); e != nil {
 		t.Fatal(e)
 	}
 	got, e := mediaDestination(&side)
@@ -80,6 +99,11 @@ func TestSupportDestinations(t *testing.T) {
 	if strings.TrimSuffix(got, ".en.srt") != strings.TrimSuffix(want, ".mkv") {
 		t.Fatalf("%s vs %s", got, want)
 	}
+	os.WriteFile(want, []byte("changed"), 0644)
+	if _, e := mediaDestination(&side); e == nil {
+		t.Fatal("support accepted changed primary")
+	}
+
 }
 func TestInvalidDownloadsNeverPublished(t *testing.T) {
 	for _, status := range []int{200, 404} {
@@ -158,5 +182,27 @@ func TestRepairKeepsRecoveryAndMusicTags(t *testing.T) {
 	got, e = os.ReadFile(recovery[0])
 	if e != nil || !bytes.Equal(got, b) {
 		t.Fatal("recovery differs")
+	}
+}
+
+func TestRepairUsesParentEpisodeMarker(t *testing.T) {
+	if _, e := exec.LookPath("ffmpeg"); e != nil {
+		t.Skip("ffmpeg required")
+	}
+	root := t.TempDir()
+	MoviesPath = filepath.Join(root, "movies")
+	TVShowPath = filepath.Join(root, "tv")
+	t.Setenv("MEDIA_QUARANTINE_PATH", filepath.Join(root, "recovery"))
+	source := filepath.Join(MoviesPath, "Show.S02 E01", "video.mkv")
+	os.MkdirAll(filepath.Dir(source), 0755)
+	os.Mkdir(TVShowPath, 0755)
+	if out, e := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=size=16x16:rate=1", "-t", "1", "-c:v", "mpeg4", source).CombinedOutput(); e != nil {
+		t.Fatalf("%s %v", out, e)
+	}
+	if e := repairLibraryFile(source); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := os.Stat(filepath.Join(TVShowPath, "Show/Season_02/Show.S02E01.video.mkv")); e != nil {
+		t.Fatal(e)
 	}
 }

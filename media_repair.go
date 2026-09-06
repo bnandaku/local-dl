@@ -17,10 +17,12 @@ func repairLibraryFile(source string) error {
 		return err
 	}
 	var from ContentType
+	var relative string
 	for root, kind := range map[string]ContentType{MoviesPath: Movies, TVShowPath: TVShow, musicEnv("MUSIC_PATH", "/mnt/music"): Music} {
 		rel, e := filepath.Rel(root, source)
 		if e == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			from = kind
+			relative = rel
 			break
 		}
 	}
@@ -34,7 +36,7 @@ func repairLibraryFile(source string) error {
 	if err != nil {
 		return err
 	}
-	item := Item{Name: filepath.Base(source), Type: from}
+	item := Item{Name: filepath.Base(source), Type: from, RelativePath: relative}
 	if err = routeMedia(&item); err != nil {
 		return err
 	}

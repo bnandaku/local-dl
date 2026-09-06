@@ -44,7 +44,11 @@ func retryMusicAcknowledgements() {
 		if err != nil || digest != record.SHA256 {
 			continue
 		}
-		item := Item{Name: record.Name, FileId: record.FileID, Type: Music, Completed: true, CompletedPercent: "100", Started: true, InQueue: true}
+		kind := record.Type
+		if kind == "" {
+			kind = Music
+		}
+		item := Item{Name: record.Name, FileId: record.FileID, Type: kind, Completed: true, CompletedPercent: "100", Started: true, InQueue: true}
 		if err := sendMusicAcknowledgement(item); err != nil {
 			logMessage(LogLevelWarn, "Music", "Source receipt for file %d will retry: %v", record.FileID, err)
 			continue

@@ -45,59 +45,68 @@ func videoDestination(name string, kind ContentType, relative string) (string, e
 	return filepath.Join(MoviesPath, musicComponent(folder, strings.TrimSuffix(name, filepath.Ext(name))), name), nil
 }
 
+func verifiedPrimary(i *Item) (musicImportRecord, error) {
+	musicImportMutex.Lock()
+	statePath := musicEnv("MUSIC_STATE_PATH", filepath.Join(filepath.Dir(musicEnv("CATALOG_DB", "./tvshows_catalog.db")), "music-ingest.json"))
+	state, err := readMusicState(statePath)
+	musicImportMutex.Unlock()
+	if err != nil {
+		return musicImportRecord{}, err
+	}
+	p, ok := state.Receipts[fmt.Sprint(i.MediaFileID)]
+	expected := "video"
+	root := MoviesPath
+	if i.Type == Music {
+		expected = "audio"
+		root = musicEnv("MUSIC_PATH", "/mnt/music")
+	} else if i.Type == TVShow {
+		root = TVShowPath
+	}
+	if !ok || i.MediaFileID <= 0 || p.Name != i.MediaName || mediaKind(p.Name) != expected {
+		return p, fmt.Errorf("waiting for verified primary media")
+	}
+	rel, e := filepath.Rel(root, p.Path)
+	if e != nil || rel == ".." || strings.HasPrefix(rel, "../") {
+		return p, fmt.Errorf("primary is outside expected library")
+	}
+	digest, e := musicFileDigest(p.Path)
+	if e != nil || digest != p.SHA256 {
+		return p, fmt.Errorf("primary media missing or changed")
+	}
+	return p, nil
+}
+
 func mediaDestination(i *Item) (string, error) {
 	kind := mediaKind(i.Name)
-	if kind == "video" {
-		if i.MediaName != "" && safeMediaName(i.MediaName) && mediaKind(i.MediaName) == "video" && !tvShowPattern.MatchString(i.Name) {
-			primary := Item{Name: i.MediaName, Type: i.Type, RelativePath: i.RelativePath}
-			if err := routeMedia(&primary); err != nil {
-				return "", err
-			}
-			path, err := videoDestination(primary.Name, primary.Type, primary.RelativePath)
-			if err != nil {
-				return "", err
-			}
-			return filepath.Join(filepath.Dir(path), "Trailers", i.Name), nil
-		}
+	if kind == "video" && i.MediaName == "" {
 		return videoDestination(i.Name, i.Type, i.RelativePath)
 	}
+	p, err := verifiedPrimary(i)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Dir(p.Path)
 	if i.Type == Music {
-		musicImportMutex.Lock()
-		defer musicImportMutex.Unlock()
-		statePath := musicEnv("MUSIC_STATE_PATH", filepath.Join(filepath.Dir(musicEnv("CATALOG_DB", "./tvshows_catalog.db")), "music-ingest.json"))
-		state, err := readMusicState(statePath)
-		if err != nil {
-			return "", err
-		}
-		primary, ok := state.Receipts[fmt.Sprint(i.MediaFileID)]
-		if !ok || !isAudioFilename(primary.Name) {
-			return "", fmt.Errorf("waiting for associated album audio")
-		}
-		root := musicEnv("MUSIC_PATH", "/mnt/music")
-		rel, err := filepath.Rel(root, primary.Path)
-		if err != nil || strings.HasPrefix(rel, "..") {
-			return "", fmt.Errorf("associated album outside music root")
-		}
-		dir := filepath.Dir(primary.Path)
 		if strings.HasPrefix(filepath.Base(dir), "Disc ") {
 			dir = filepath.Dir(dir)
 		}
 		return filepath.Join(dir, i.Name), nil
 	}
-	primary, err := videoDestination(i.MediaName, i.Type, i.RelativePath)
-	if err != nil {
-		return "", err
+	if kind == "video" {
+		return filepath.Join(dir, "Trailers", i.Name), nil
 	}
 	name := i.Name
 	if kind == "subtitle" {
 		stem := strings.TrimSuffix(i.MediaName, filepath.Ext(i.MediaName))
-		suffix := strings.TrimPrefix(i.Name, stem)
-		if suffix == i.Name {
+		suffix := i.Name
+		if strings.HasPrefix(strings.ToLower(i.Name), strings.ToLower(stem)) {
+			suffix = i.Name[len(stem):]
+		} else {
 			suffix = "." + i.Name
 		}
-		name = strings.TrimSuffix(filepath.Base(primary), filepath.Ext(primary)) + suffix
+		name = strings.TrimSuffix(filepath.Base(p.Path), filepath.Ext(p.Path)) + suffix
 	}
-	return filepath.Join(filepath.Dir(primary), name), nil
+	return filepath.Join(dir, name), nil
 }
 
 func probeVideo(path string) error {
@@ -198,34 +207,30 @@ func (i *Item) downloadMedia() error {
 	if err != nil {
 		return err
 	}
+	musicImportMutex.Lock()
+	statePath := musicEnv("MUSIC_STATE_PATH", filepath.Join(filepath.Dir(musicEnv("CATALOG_DB", "./tvshows_catalog.db")), "music-ingest.json"))
+	state, e := readMusicState(statePath)
+	if e == nil && i.FileId > 0 {
+		state.Receipts[fmt.Sprint(i.FileId)] = musicImportRecord{Type: i.Type, FileID: i.FileId, Name: i.Name, Path: target, SHA256: digest}
+		e = saveMusicState(statePath, state)
+	}
+	musicImportMutex.Unlock()
+	if e != nil {
+		return e
+	}
 	if i.Type == Music {
-		musicImportMutex.Lock()
-		statePath := musicEnv("MUSIC_STATE_PATH", filepath.Join(filepath.Dir(musicEnv("CATALOG_DB", "./tvshows_catalog.db")), "music-ingest.json"))
-		state, e := readMusicState(statePath)
-		if e == nil && i.FileId > 0 {
-			state.Receipts[fmt.Sprint(i.FileId)] = musicImportRecord{FileID: i.FileId, Name: i.Name, Path: target, SHA256: digest}
-			e = saveMusicState(statePath, state)
-		}
-		musicImportMutex.Unlock()
-		if e != nil {
-			return e
-		}
 		if err = removeMusicJob(i); err != nil {
 			return err
 		}
-		scheduleMusicAckRetry()
 		TriggerMusicSync()
-	} else {
-		i.Completed = true
-		if mediaKind(i.Name) == "video" {
-			update(filepath.Base(target))
-		}
-		i.CompletedPercent = "100"
-		UpdateQueue(i)
-		if mediaKind(i.Name) == "video" {
-			if err := AddFileToCatalog(target); err != nil {
-				logMessage(LogLevelWarn, "Catalog", "Cannot catalog media: %v", err)
-			}
+	}
+	i.Completed = true
+	i.CompletedPercent = "100"
+	scheduleMusicAckRetry()
+	if mediaKind(i.Name) == "video" {
+		update(filepath.Base(target))
+		if err := AddFileToCatalog(target); err != nil {
+			logMessage(LogLevelWarn, "Catalog", "Cannot catalog media: %v", err)
 		}
 	}
 	logMessage(LogLevelInfo, "Media", "Verified media saved: %s", target)

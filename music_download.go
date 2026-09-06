@@ -18,6 +18,7 @@ import (
 var musicImportMutex sync.Mutex
 
 type musicImportRecord struct {
+	Type         ContentType   `json:"type,omitempty"`
 	FileID       int64         `json:"file_id"`
 	Name         string        `json:"name"`
 	Acknowledged bool          `json:"acknowledged"`
