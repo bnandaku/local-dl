@@ -84,6 +84,7 @@ func sendMusicAcknowledgement(item Item) error {
 		return fmt.Errorf("invalid completion server URL")
 	}
 	req.Header.Set("Content-Type", "application/json")
+	authorizeBotRequest(req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("completion server unavailable")
@@ -97,6 +98,7 @@ func sendMusicAcknowledgement(item Item) error {
 }
 
 func InitMusicIngest(ctx context.Context) {
+	go runLinkFeedback(ctx)
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()

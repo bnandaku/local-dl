@@ -1,0 +1,1897 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Peachesbot complete HTTP API and examples",
+    "version": "1.0.0",
+    "description": "All registered HTTP endpoints of putio-go-server, including trusted local-dl integration and legacy public callbacks/focus endpoints. Configure local-dl REMOTE_SERVER to the private bot address and matching BOT_SERVICE_TOKEN on both services. Global bearer security applies except where security: [] explicitly marks legacy public routes. This repository document is not served by the bot."
+  },
+  "servers": [
+    {
+      "url": "http://peaches-discord:8080",
+      "description": "Example private deployment; use your configured REMOTE_SERVER."
+    }
+  ],
+  "security": [
+    {
+      "serviceBearer": []
+    }
+  ],
+  "paths": {
+    "/api/v1/links": {
+      "get": {
+        "operationId": "listDownloadLinks",
+        "summary": "List unconfirmed download attempts",
+        "description": "Service credentials can read all groups. Ascending keyset pagination; Discord !links limits ordinary users to their own server requests.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkPage"
+                },
+                "example": {
+                  "items": [
+                    {
+                      "id": 7,
+                      "group_id": "example-request-group",
+                      "query": "Example Show S01E01",
+                      "title": "Example.Show.S01E01.1080p.HEVC",
+                      "link": "magnet:?xt=urn%3Abtih%3A0123456789012345678901234567890123456789",
+                      "status": "queued",
+                      "reason": "",
+                      "transfer_id": 42,
+                      "created_at": "2026-09-06 21:00:00"
+                    }
+                  ],
+                  "next_after": 0
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input or no eligible replacement; inspect error before retrying.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown link/file, or history already cleaned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State conflict or another link operation is running. Read current state before retrying.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authentication or persistent history is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/links/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getDownloadLink",
+        "summary": "Read an attempt",
+        "description": "",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Link"
+                },
+                "example": {
+                  "id": 7,
+                  "group_id": "example-request-group",
+                  "query": "Example Show S01E01",
+                  "title": "Example.Show.S01E01.1080p.HEVC",
+                  "link": "magnet:?xt=urn%3Abtih%3A0123456789012345678901234567890123456789",
+                  "status": "queued",
+                  "reason": "",
+                  "transfer_id": 42,
+                  "created_at": "2026-09-06 21:00:00"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input or no eligible replacement; inspect error before retrying.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown link/file, or history already cleaned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State conflict or another link operation is running. Read current state before retrying.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authentication or persistent history is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/link-files/{file_id}": {
+      "parameters": [
+        {
+          "name": "file_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          }
+        }
+      ],
+      "get": {
+        "operationId": "findLinkByFile",
+        "summary": "Map a Put.io file ID to its download attempt",
+        "description": "Mapping is saved by the Put.io completion callback before queue publication. Historical downloads made before tracking, or cleaned groups, return 404.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Link"
+                },
+                "example": {
+                  "id": 7,
+                  "group_id": "example-request-group",
+                  "query": "Example Show S01E01",
+                  "title": "Example.Show.S01E01.1080p.HEVC",
+                  "link": "magnet:?xt=urn%3Abtih%3A0123456789012345678901234567890123456789",
+                  "status": "queued",
+                  "reason": "",
+                  "transfer_id": 42,
+                  "created_at": "2026-09-06 21:00:00"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input or no eligible replacement; inspect error before retrying.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown link/file, or history already cleaned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State conflict or another link operation is running. Read current state before retrying.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authentication or persistent history is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/links/{id}/report": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          }
+        }
+      ],
+      "post": {
+        "operationId": "reportDownloadValidation",
+        "summary": "Report good or bad downloaded content",
+        "description": "Repeated reports of the same state are safe. Bad is terminal until group cleanup. A validated file report may still return queued until all primary files validate. Bad reports retain the blacklist and emit one state-change notice; they do not themselves download a replacement. Use retry next. Body limit 4096 bytes.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Link"
+                },
+                "example": {
+                  "id": 7,
+                  "group_id": "example-request-group",
+                  "query": "Example Show S01E01",
+                  "title": "Example.Show.S01E01.1080p.HEVC",
+                  "link": "magnet:?xt=urn%3Abtih%3A0123456789012345678901234567890123456789",
+                  "status": "queued",
+                  "reason": "",
+                  "transfer_id": 42,
+                  "created_at": "2026-09-06 21:00:00"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input or no eligible replacement; inspect error before retrying.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown link/file, or history already cleaned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State conflict or another link operation is running. Read current state before retrying.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authentication or persistent history is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Report"
+              },
+              "examples": {
+                "badFile": {
+                  "value": {
+                    "status": "bad",
+                    "reason": "invalid_media",
+                    "file_id": 123
+                  }
+                },
+                "validFile": {
+                  "value": {
+                    "status": "validated",
+                    "file_id": 123
+                  }
+                },
+                "wholeRelease": {
+                  "value": {
+                    "status": "validated"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/links/{id}/retry": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          }
+        }
+      ],
+      "post": {
+        "operationId": "requeueReplacement",
+        "summary": "Search and automatically download a replacement",
+        "description": "Send {} to preserve the original query. Only bad attempts can request replacement. The bot searches Prowlarr, excludes retained bad sources/infohashes, checks the same media type and all query words, requires an exact episode for TV, and applies current guild auto size/seeder/quality limits. No eligible candidate returns 400 without downloading. Up to three replacements per group. A repeat request for an older bad ID returns the newest existing attempt without resubmitting. To replace another bad replacement, call its new ID. Submitting/uncertain attempts require operator reconciliation; never blindly resubmit. Processing is synchronous and can take several minutes. A network timeout requires GET/list and then retrying the SAME bad ID. Accepted replacements emit one channel notice. Body limit 4096 bytes.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Link"
+                },
+                "example": {
+                  "id": 7,
+                  "group_id": "example-request-group",
+                  "query": "Example Show S01E01",
+                  "title": "Example.Show.S01E01.1080p.HEVC",
+                  "link": "magnet:?xt=urn%3Abtih%3A0123456789012345678901234567890123456789",
+                  "status": "queued",
+                  "reason": "",
+                  "transfer_id": 42,
+                  "created_at": "2026-09-06 21:00:00"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input or no eligible replacement; inspect error before retrying.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown link/file, or history already cleaned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State conflict or another link operation is running. Read current state before retrying.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authentication or persistent history is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Replacement"
+              },
+              "examples": {
+                "originalSearch": {
+                  "value": {}
+                },
+                "directDownload": {
+                  "value": {
+                    "query": "Example Show S01E01",
+                    "media_type": "tv"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/links/{id}/confirm": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          }
+        }
+      ],
+      "post": {
+        "operationId": "confirmDownload",
+        "summary": "Confirm good media and remove grouped history",
+        "description": "Requires validated status and no other unresolved attempts in the group. First report the whole release validated (or each primary file); then confirm. Deletes good and bad attempts, file mappings and their blacklists transactionally, but does not delete Plex or Put.io media. Emits one cleanup notice. Stores only numeric confirmation IDs for seven days so a repeated confirmation succeeds with zero removed; after expiration it returns 404. Discord !link confirm is an explicit human attestation and performs validation plus confirmation.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Confirmation"
+                },
+                "example": {
+                  "confirmed_id": 8,
+                  "removed_attempts": 2
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input or no eligible replacement; inspect error before retrying.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown link/file, or history already cleaned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State conflict or another link operation is running. Read current state before retrying.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authentication or persistent history is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/queue": {
+      "post": {
+        "operationId": "pollDownloadQueue",
+        "summary": "Poll files awaiting local-dl ingestion",
+        "description": "Existing interservice endpoint. Download only complete, validated media into the library. Use file_id to map validation reports to attempts.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Queue"
+                },
+                "example": {
+                  "items": [],
+                  "catalog_status": {
+                    "needs_resync": false
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input or no eligible replacement; inspect error before retrying.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown link/file, or history already cleaned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State conflict or another link operation is running. Read current state before retrying.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authentication or persistent history is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/updateQueue": {
+      "post": {
+        "operationId": "updateDownloadQueue",
+        "summary": "Update queue state or acknowledge a published file",
+        "description": "Existing endpoint. completed=true deletes the Put.io source file. Never use completion to discard invalid media. Retain a durable completion receipt and avoid logging credential-bearing item URLs.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input or no eligible replacement; inspect error before retrying.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown link/file, or history already cleaned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State conflict or another link operation is running. Read current state before retrying.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authentication or persistent history is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DownloadItem"
+              },
+              "example": {
+                "file_id": 123,
+                "name": "Example.Show.S01E01.mkv",
+                "url": "https://download.example.invalid/123",
+                "type": "tvshow",
+                "completed": true,
+                "completed_percent": "100",
+                "started": true,
+                "in_queue": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/focus/{location}": {
+      "get": {
+        "operationId": "getCurrentFocus",
+        "summary": "Read the current focus mode",
+        "description": "Public legacy endpoint. location is accepted but currently ignored; the configured schedule determines the result. Legacy focus calculation uses a fixed UTC-5 offset; it does not adjust for daylight saving time.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "condition_key": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "example": {
+                  "condition_key": "work"
+                }
+              }
+            }
+          }
+        }
+      },
+      "parameters": [
+        {
+          "name": "location",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "example": "home"
+        }
+      ]
+    },
+    "/focusConfig": {
+      "get": {
+        "operationId": "getFocusConfiguration",
+        "summary": "Read the focus schedule",
+        "description": "Public legacy read endpoint; also used by the container health probe.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FocusConfig"
+                },
+                "example": {
+                  "sleep_start_hour": 23,
+                  "sleep_end_hour": 8,
+                  "work_start_hour": 8,
+                  "work_end_hour": 20,
+                  "work_days": [
+                    1,
+                    2,
+                    3,
+                    4,
+                    5
+                  ],
+                  "sleep_mode_name": "sleep",
+                  "work_mode_name": "work",
+                  "weekend_mode_name": "personal",
+                  "personal_mode_name": "personal"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "setFocusConfiguration",
+        "summary": "Replace the persisted focus schedule",
+        "description": "Public legacy mutation endpoint. Replaces the complete configuration and writes focus_config.json; partial bodies leave omitted fields at zero values. This route does not currently require the service bearer token.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "config": {
+                      "$ref": "#/components/schemas/FocusConfig"
+                    }
+                  }
+                },
+                "example": {
+                  "message": "Focus configuration updated successfully",
+                  "config": {
+                    "sleep_start_hour": 23,
+                    "sleep_end_hour": 8,
+                    "work_start_hour": 8,
+                    "work_end_hour": 20,
+                    "work_days": [
+                      1,
+                      2,
+                      3,
+                      4,
+                      5
+                    ],
+                    "sleep_mode_name": "sleep",
+                    "work_mode_name": "work",
+                    "weekend_mode_name": "personal",
+                    "personal_mode_name": "personal"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Configuration persistence failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FocusConfig"
+              },
+              "example": {
+                "sleep_start_hour": 23,
+                "sleep_end_hour": 8,
+                "work_start_hour": 8,
+                "work_end_hour": 20,
+                "work_days": [
+                  1,
+                  2,
+                  3,
+                  4,
+                  5
+                ],
+                "sleep_mode_name": "sleep",
+                "work_mode_name": "work",
+                "weekend_mode_name": "personal",
+                "personal_mode_name": "personal"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dl": {
+      "post": {
+        "operationId": "receivePutioCompletion",
+        "summary": "Receive a Put.io transfer completion callback",
+        "description": "Public callback configured by the bot when submitting a transfer. Fetches the transfer file and queues supported media for local-dl. Not an API for submitting raw download URLs. It may send Discord completion notices. Credentials must not be included in examples or logs.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid callback or Put.io file lookup failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Could not persist download tracking; retry the callback.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PutIOCallBack"
+              },
+              "example": {
+                "id": 42,
+                "file_id": 123,
+                "name": "Example.Movie.2025.1080p.mkv",
+                "status": "COMPLETED",
+                "percent_done": 100
+              }
+            }
+          }
+        }
+      }
+    },
+    "/plex": {
+      "post": {
+        "operationId": "receivePlexWebhook",
+        "summary": "Receive a Plex playback webhook",
+        "description": "Public legacy multipart webhook. payload is a JSON string matching PlexWebhook; optional thumb is accepted. Registered playback events can trigger focus/Discord integration. The existing handler returns an empty 200 even for malformed or unhandled events; a 200 is not proof an event was processed.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "payload"
+                ],
+                "properties": {
+                  "payload": {
+                    "type": "string",
+                    "description": "JSON-encoded PlexWebhook object.",
+                    "example": "{\"event\": \"media.play\", \"Account\": {\"title\": \"Example user\"}, \"Metadata\": {\"title\": \"Example Movie\", \"type\": \"movie\"}}"
+                  },
+                  "thumb": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Empty response; handler does not distinguish ignored/invalid events."
+          }
+        }
+      }
+    },
+    "/update": {
+      "post": {
+        "operationId": "announceImportedMedia",
+        "summary": "Send a legacy new-media Discord notification",
+        "description": "Posts an embed to the legacy notification channel. The current implementation returns success after attempting delivery; it does not confirm Discord delivery.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                }
+              },
+              "example": {
+                "name": "Example Movie (2025)"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                "example": {
+                  "success": true
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid service token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Invalid JSON.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service token missing from configuration.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/catalogUpdate": {
+      "post": {
+        "operationId": "replaceDownloaderCatalog",
+        "summary": "Upload the downloader library catalog",
+        "description": "Receives a local-dl catalog snapshot, updates cached library records/statistics and clears the resync flag. Accepts plain JSON or gzip-compressed JSON with Content-Encoding: gzip. This cache is separate from direct Plex library queries.",
+        "parameters": [
+          {
+            "name": "Content-Encoding",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gzip"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CatalogUpdatePayload"
+              },
+              "example": {
+                "timestamp": "2026-09-06T21:00:00Z",
+                "statistics": {
+                  "total_shows": 1,
+                  "total_episodes": 1,
+                  "total_movies": 0
+                },
+                "shows": [
+                  {
+                    "show_name": "Example Show",
+                    "seasons": [
+                      {
+                        "season": "01",
+                        "episodes": [
+                          {
+                            "episode": "01",
+                            "filename": "Example.Show.S01E01.mkv",
+                            "file_path": "/mnt/tvshows/Example Show/Season_01/Example.Show.S01E01.mkv",
+                            "file_size": 800000000,
+                            "modified_at": "2026-09-06T20:00:00Z"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ],
+                "movies": [],
+                "recent": []
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "shows": {
+                      "type": "integer"
+                    },
+                    "episodes": {
+                      "type": "integer"
+                    }
+                  }
+                },
+                "example": {
+                  "message": "Catalog updated successfully",
+                  "shows": 1,
+                  "episodes": 1
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid gzip or JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid service token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Catalog update failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service token missing from configuration.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "serviceBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Shared BOT_SERVICE_TOKEN. Required on every documented endpoint. It grants trusted downloader access across all requests."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "Link": {
+        "type": "object",
+        "required": [
+          "id",
+          "group_id",
+          "query",
+          "title",
+          "link",
+          "status",
+          "reason",
+          "transfer_id",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "group_id": {
+            "type": "string",
+            "description": "Opaque original-request group. Confirmation clears all attempts in this group."
+          },
+          "query": {
+            "type": "string",
+            "description": "Original search, empty for a direct URL download."
+          },
+          "title": {
+            "type": "string"
+          },
+          "link": {
+            "type": "string",
+            "description": "Safe display link: magnet infohash only, or redacted torrent URL. Private tracker credentials are never returned. Do not submit this field as a download URL."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "submitting",
+              "queued",
+              "bad",
+              "validated",
+              "uncertain"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "transfer_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Put.io transfer ID, zero until confirmed by Put.io."
+          },
+          "created_at": {
+            "type": "string",
+            "description": "UTC SQLite timestamp, YYYY-MM-DD HH:MM:SS."
+          }
+        }
+      },
+      "LinkPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "next_after"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Link"
+            }
+          },
+          "next_after": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pass as after to continue. Zero means end; a full final page can require one empty request."
+          }
+        }
+      },
+      "Report": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "bad",
+              "validated"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "no_media",
+              "invalid_media",
+              "wrong_content",
+              "malware"
+            ],
+            "description": "Required for bad; omit for validated. Do not classify timeouts, missing tools, storage failures or partial downloads as bad."
+          },
+          "file_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "description": "Recommended for local-dl. Must be a primary media file belonging to this attempt. Validated reports aggregate across all primary files; supporting files cannot blacklist or validate a release. Omit only when attesting the entire release."
+          }
+        }
+      },
+      "Replacement": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "Only needed when the original direct-link download had no search query; cannot replace an existing query."
+          },
+          "media_type": {
+            "type": "string",
+            "enum": [
+              "movie",
+              "tv",
+              "music"
+            ],
+            "description": "Required with a direct-link query; ignored when the original search has a known type."
+          }
+        }
+      },
+      "Confirmation": {
+        "type": "object",
+        "required": [
+          "confirmed_id",
+          "removed_attempts"
+        ],
+        "properties": {
+          "confirmed_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "removed_attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Zero when repeating a confirmation within the seven-day idempotency window."
+          }
+        }
+      },
+      "DownloadItem": {
+        "type": "object",
+        "required": [
+          "file_id",
+          "name",
+          "url",
+          "type"
+        ],
+        "properties": {
+          "file_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "description": "Private Put.io download URL; includes credentials. Never log it."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "movie",
+              "tvshow",
+              "music",
+              "anime"
+            ]
+          },
+          "file_size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "relative_path": {
+            "type": "string"
+          },
+          "media_name": {
+            "type": "string"
+          },
+          "media_file_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "started": {
+            "type": "boolean"
+          },
+          "completed_percent": {
+            "type": "string"
+          },
+          "completed": {
+            "type": "boolean",
+            "description": "True invokes Put.io source deletion. Use only after successful validation and durable publication, never to acknowledge bad media."
+          },
+          "in_queue": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Queue": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "$ref": "#/components/schemas/DownloadItem"
+            }
+          },
+          "catalog_status": {
+            "$ref": "#/components/schemas/CatalogSyncState"
+          }
+        }
+      },
+      "CatalogUpdatePayload": {
+        "type": "object",
+        "properties": {
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "statistics": {
+            "$ref": "#/components/schemas/CatalogStatistics"
+          },
+          "shows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ShowData"
+            }
+          },
+          "movies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MovieData"
+            }
+          },
+          "recent": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecentItem"
+            }
+          }
+        }
+      },
+      "CatalogStatistics": {
+        "type": "object",
+        "properties": {
+          "total_shows": {
+            "type": "integer"
+          },
+          "total_episodes": {
+            "type": "integer"
+          },
+          "total_movies": {
+            "type": "integer"
+          },
+          "total_size_gb": {
+            "type": "number",
+            "format": "double"
+          },
+          "total_size_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tv_size_gb": {
+            "type": "number",
+            "format": "double"
+          },
+          "movies_size_gb": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "ShowData": {
+        "type": "object",
+        "properties": {
+          "show_name": {
+            "type": "string"
+          },
+          "seasons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeasonData"
+            }
+          }
+        }
+      },
+      "SeasonData": {
+        "type": "object",
+        "properties": {
+          "season": {
+            "type": "string"
+          },
+          "episodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EpisodeData"
+            }
+          }
+        }
+      },
+      "EpisodeData": {
+        "type": "object",
+        "properties": {
+          "episode": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "file_path": {
+            "type": "string"
+          },
+          "file_size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "modified_at": {
+            "type": "string"
+          }
+        }
+      },
+      "MovieData": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "year": {
+            "type": "string"
+          },
+          "quality": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "file_path": {
+            "type": "string"
+          },
+          "file_size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "modified_at": {
+            "type": "string"
+          }
+        }
+      },
+      "RecentItem": {
+        "type": "object",
+        "properties": {
+          "media_type": {
+            "type": "string"
+          },
+          "show_name": {
+            "type": "string"
+          },
+          "season": {
+            "type": "string"
+          },
+          "episode": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "year": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "added_to_catalog": {
+            "type": "string"
+          }
+        }
+      },
+      "FocusConfig": {
+        "type": "object",
+        "properties": {
+          "sleep_start_hour": {
+            "type": "integer"
+          },
+          "sleep_end_hour": {
+            "type": "integer"
+          },
+          "work_start_hour": {
+            "type": "integer"
+          },
+          "work_end_hour": {
+            "type": "integer"
+          },
+          "work_days": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "sleep_mode_name": {
+            "type": "string"
+          },
+          "work_mode_name": {
+            "type": "string"
+          },
+          "weekend_mode_name": {
+            "type": "string"
+          },
+          "personal_mode_name": {
+            "type": "string"
+          }
+        }
+      },
+      "PutIOCallBack": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "save_parent_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "file_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "source": {
+            "type": "string"
+          },
+          "callback_url": {
+            "type": "string"
+          },
+          "is_private": {
+            "type": "boolean"
+          },
+          "created_torrent": {
+            "type": "boolean"
+          },
+          "simulated": {
+            "type": "boolean"
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "finished_at": {
+            "type": "string"
+          },
+          "percent_done": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "down_speed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "up_speed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "peers_connected": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "peers_getting_from_us": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "peers_sending_to_us": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "downloaded": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "uploaded": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "current_ratio": {
+            "type": "number",
+            "format": "double"
+          },
+          "availability": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "seconds_seeding": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "completion_percent": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "download_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "userfile_exists": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CatalogSyncState": {
+        "type": "object",
+        "properties": {
+          "needs_resync": {
+            "type": "boolean"
+          },
+          "resync_reason": {
+            "type": "string"
+          },
+          "last_updated": {
+            "type": "string"
+          },
+          "show_count": {
+            "type": "integer"
+          },
+          "episode_count": {
+            "type": "integer"
+          }
+        }
+      },
+      "PlexWebhook": {
+        "type": "object",
+        "properties": {
+          "event": {
+            "type": "string",
+            "example": "media.play"
+          },
+          "user": {
+            "type": "boolean"
+          },
+          "owner": {
+            "type": "boolean"
+          },
+          "Account": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "thumb": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            }
+          },
+          "Server": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "uuid": {
+                "type": "string"
+              }
+            }
+          },
+          "Player": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "Metadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "description": "Plex event payload. Metadata and Player are provider-defined objects; unused fields are accepted."
+      }
+    }
+  },
+  "x-unmatched-routes": {
+    "description": "Any unregistered path or unsupported method uses the existing attachment fallback, normally HTTP 200 text/plain with Content-Disposition. It does not serve repository files, including this specification. HEAD returns only headers. Clients must validate response content type/schema rather than treating every 200 as API success. Versioned service path prefixes still require bearer authentication.",
+    "body": "stop being a piece of shit"
+  }
+}

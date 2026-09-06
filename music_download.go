@@ -118,6 +118,9 @@ func (i *Item) downloadMusic() error {
 	}
 	i.Type = Music
 	i.CompletedPercent = "100"
+	if err := queueLinkFeedback(i, "validated", ""); err != nil {
+		return err
+	}
 	i.Completed = true
 	logMessage(LogLevelInfo, "Music", "Verified music saved: %s", path)
 	// Queue completion is the existing file_id based acknowledgement. The source

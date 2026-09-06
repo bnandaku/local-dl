@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -390,6 +391,9 @@ func (i *Item) StartDownload() error {
 		CurrentJobsMutex.Unlock()
 	}()
 
+	if e := checkDownloadBlacklist(i); e != nil {
+		return e
+	}
 	logMessage(LogLevelInfo, "Download", "Starting download for: %s (Type: %s)", i.Name, i.Type)
 	i.Started = true
 
@@ -417,6 +421,7 @@ func update(name string) {
 	}
 	req.Header.Add("Content-Type", "application/json")
 
+	authorizeBotRequest(req)
 	res, err := client.Do(req)
 	if err != nil {
 		logMessage(LogLevelError, "Webhook", "Failed to send update webhook for %s: %v", name, err)
@@ -542,6 +547,14 @@ func Dequeue(ctx context.Context) {
 		// Start download in goroutine
 		go func(j *Item) {
 			if err := j.StartDownload(); err != nil {
+				if errors.Is(err, errBlacklistedDownload) || reportBadMedia(j, err) {
+					if j.Type == Music || isAudioFilename(j.Name) {
+						_ = removeMusicJob(j)
+						forgetMusicJob(j)
+					}
+					logMessage(LogLevelWarn, "Validation", "Rejected invalid media; replacement feedback saved for file %d", j.FileId)
+					return
+				}
 				logMessage(LogLevelError, "Dequeue", "Download failed for %s, re-queuing: %v", j.Name, err)
 				// Re-queue on failure
 				JobsMutex.Lock()
@@ -630,6 +643,7 @@ func GetQueue(ctx context.Context) {
 			continue
 		}
 
+		authorizeBotRequest(req)
 		res, err := client.Do(req)
 		if err != nil {
 			logMessage(LogLevelError, "QueuePoller", "Failed to fetch queue: %v (retry in %s)", err, retryDelay)
@@ -822,6 +836,7 @@ func UpdateQueue(item *Item) {
 	}
 	req.Header.Add("Content-Type", "application/json")
 
+	authorizeBotRequest(req)
 	res, err := client.Do(req)
 	if err != nil {
 		logMessage(LogLevelError, "QueueUpdate", "Failed to send queue update: %v", err)

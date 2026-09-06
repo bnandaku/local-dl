@@ -12,20 +12,20 @@ import (
 )
 
 var (
-	catalogSyncMutex     sync.Mutex
-	lastCatalogSyncTime  time.Time
-	catalogSyncDebounce  = 10 * time.Second // Wait 10 seconds before syncing
-	pendingSyncTimer     *time.Timer
-	isInitialScan        = true // Flag to prevent spam during initial scan
+	catalogSyncMutex    sync.Mutex
+	lastCatalogSyncTime time.Time
+	catalogSyncDebounce = 10 * time.Second // Wait 10 seconds before syncing
+	pendingSyncTimer    *time.Timer
+	isInitialScan       = true // Flag to prevent spam during initial scan
 )
 
 // CatalogSyncData represents the complete catalog data to send to putio-go-server
 type CatalogSyncData struct {
-	Timestamp  time.Time              `json:"timestamp"`
-	Statistics CatalogStatistics      `json:"statistics"`
-	Shows      []ShowData             `json:"shows"`
-	Movies     []MovieData            `json:"movies"`
-	Recent     []RecentItem           `json:"recent"`
+	Timestamp  time.Time         `json:"timestamp"`
+	Statistics CatalogStatistics `json:"statistics"`
+	Shows      []ShowData        `json:"shows"`
+	Movies     []MovieData       `json:"movies"`
+	Recent     []RecentItem      `json:"recent"`
 }
 
 // CatalogStatistics holds overall catalog statistics
@@ -279,6 +279,7 @@ func SendCatalogUpdate() error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
 
+	authorizeBotRequest(req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)

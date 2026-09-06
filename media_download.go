@@ -114,8 +114,13 @@ func probeVideo(path string) error {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-protocol_whitelist", "file", "-show_entries", "stream=codec_type:stream_disposition=attached_pic", "-of", "json", path)
 	out := &limitedMusicOutput{max: 1 << 20}
+	probeErrors := &limitedMusicOutput{max: 65536}
+	cmd.Stderr = probeErrors
 	cmd.Stdout = out
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() == nil && invalidProbeInput(string(probeErrors.data)) {
+			return badMediaError{"invalid_media"}
+		}
 		return fmt.Errorf("video validation failed")
 	}
 	var p struct {
@@ -134,7 +139,7 @@ func probeVideo(path string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("file contains no video stream")
+	return badMediaError{"no_media"}
 }
 
 // Publish only complete, validated downloads; never truncate an existing movie
@@ -241,6 +246,11 @@ func (i *Item) downloadMedia() error {
 			return err
 		}
 		TriggerMusicSync()
+	}
+	if mediaKind(i.Name) == "video" {
+		if err := queueLinkFeedback(i, "validated", ""); err != nil {
+			return err
+		}
 	}
 	i.Completed = true
 	i.CompletedPercent = "100"

@@ -38,8 +38,13 @@ func readMusicMetadata(path string) (MusicMetadata, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-protocol_whitelist", "file", "-show_entries", "format_tags:stream=codec_type:stream_tags:stream_disposition=attached_pic", "-of", "json", path)
 	output := &limitedMusicOutput{max: 1024 * 1024}
+	probeErrors := &limitedMusicOutput{max: 65536}
+	cmd.Stderr = probeErrors
 	cmd.Stdout = output
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() == nil && invalidProbeInput(string(probeErrors.data)) {
+			return MusicMetadata{}, badMediaError{"invalid_media"}
+		}
 		return MusicMetadata{}, fmt.Errorf("audio metadata probe failed: %w", err)
 	}
 	var probe struct {
@@ -61,7 +66,7 @@ func readMusicMetadata(path string) (MusicMetadata, error) {
 	audio := false
 	for _, stream := range probe.Streams {
 		if stream.Type == "video" && stream.Disposition.Attached == 0 {
-			return MusicMetadata{}, fmt.Errorf("video stream is not allowed in music")
+			return MusicMetadata{}, badMediaError{"wrong_content"}
 		}
 		if stream.Type == "audio" {
 			audio = true
@@ -71,7 +76,7 @@ func readMusicMetadata(path string) (MusicMetadata, error) {
 		}
 	}
 	if !audio {
-		return MusicMetadata{}, fmt.Errorf("download does not contain an audio stream")
+		return MusicMetadata{}, badMediaError{"no_media"}
 	}
 	for key, value := range probe.Format.Tags {
 		tags[strings.ToLower(key)] = strings.TrimSpace(value)
