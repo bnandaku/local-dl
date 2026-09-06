@@ -22,6 +22,7 @@ FROM ubuntu:latest AS runtime
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     ffmpeg \
+    unrar \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/

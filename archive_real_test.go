@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -12,10 +13,15 @@ import (
 
 func realRARTool(t *testing.T) string {
 	t.Helper()
-	if _, err := os.Stat("/tmp/rar-tools/root/usr/bin/unrar-nonfree"); err != nil {
-		t.Skip("unrar fixture tool unavailable")
+	name := os.Getenv("UNRAR_TEST_TOOL")
+	if name == "" {
+		name = "unrar"
 	}
-	return "/tmp/rar-tools/root/usr/bin/unrar-nonfree"
+	p, e := exec.LookPath(name)
+	if e != nil {
+		t.Skip("install unrar or set UNRAR_TEST_TOOL to run real archive fixtures")
+	}
+	return p
 }
 func realVolumes(t *testing.T, dir string, pattern string) []string {
 	t.Helper()

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,6 +20,9 @@ import (
 // Content errors are raised only after a complete transfer and a successful
 // media probe. Missing tooling, probe timeouts and network failures are not bad media.
 type badMediaError struct{ reason string }
+type failedDownloadError struct{ reason string }
+
+func (e failedDownloadError) Error() string { return "download failed: " + e.reason }
 
 func (e badMediaError) Error() string { return "content validation failed: " + e.reason }
 
@@ -72,6 +76,9 @@ func saveLinkFeedback(m map[string]linkFeedback) error {
 	if e == nil {
 		e = os.Rename(f.Name(), p)
 	}
+	if e == nil {
+		e = syncMusicDirectory(filepath.Dir(p))
+	}
 	return e
 }
 func queueLinkFeedback(i *Item, status, reason string) error {
@@ -111,51 +118,75 @@ func botLinkCall(method, path string, body interface{}, out interface{}) (int, e
 		return 0, fmt.Errorf("bot feedback connection failed")
 	}
 	defer resp.Body.Close()
+	media, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil || media != "application/json" {
+		return resp.StatusCode, fmt.Errorf("bot did not return a JSON API response")
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+	if err != nil || len(data) > 1<<20 {
+		return resp.StatusCode, fmt.Errorf("bot response exceeds limit or is incomplete")
+	}
 	if resp.StatusCode/100 != 2 {
-		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return resp.StatusCode, fmt.Errorf("bot feedback returned HTTP %d", resp.StatusCode)
+		var failure struct {
+			Code      string `json:"code"`
+			Message   string `json:"error"`
+			Retryable *bool  `json:"retryable"`
+		}
+		if json.Unmarshal(data, &failure) != nil || failure.Code == "" || failure.Message == "" || failure.Retryable == nil {
+			return resp.StatusCode, fmt.Errorf("invalid bot API error response (HTTP %d)", resp.StatusCode)
+		}
+		return resp.StatusCode, &botAPIError{Status: resp.StatusCode, Code: failure.Code, Retryable: *failure.Retryable}
 	}
 	if out != nil {
-		e = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out)
+		e = json.Unmarshal(data, out)
 	}
+
 	return resp.StatusCode, e
 }
 func retryLinkFeedback() {
-	if os.Getenv("BOT_SERVICE_TOKEN") == "" {
+	if requireRecoveryContract() != nil {
 		return
 	}
 	linkFeedbackMu.Lock()
-	m, e := readLinkFeedback()
+	pending, e := readLinkFeedback()
 	linkFeedbackMu.Unlock()
 	if e != nil {
 		return
 	}
-	for key, f := range m {
-		var a struct {
-			ID     int64  `json:"id"`
-			Status string `json:"status"`
-		}
-		status, e := botLinkCall("GET", "/api/v1/link-files/"+key, nil, &a)
-		if status == 404 {
-			deleteFeedback(key, f)
-			continue
-		}
-		if e != nil {
-			continue
-		}
-		_, e = botLinkCall("POST", fmt.Sprintf("/api/v1/links/%d/report", a.ID), f, &a)
-		if e != nil {
-			continue
-		}
-		if f.Status == "bad" {
-			_, e = botLinkCall("POST", fmt.Sprintf("/api/v1/links/%d/retry", a.ID), map[string]string{}, nil)
-			if e != nil {
+	for key, f := range pending {
+		if f.Status == "validated" {
+			// Successful publication receipts drive validation, scoped cleanup and confirmation.
+			record, ok := musicReceiptFor(&Item{FileId: f.FileID})
+			if !ok {
 				continue
 			}
+			if _, e := recoverPublishedFile(record); e == nil {
+				deleteFeedback(key, f)
+			}
+			continue
+		}
+		var a recoveryLink
+		code, e := botLinkCall("GET", "/api/v1/link-files/"+key, nil, &a)
+		if code == 404 {
+			continue
+		} // Preserve untracked failures for explicit legacy recovery.
+		if e != nil || a.ID <= 0 || a.Group == "" {
+			continue
+		}
+		a, e = reportRecoveryFile(a, f)
+		if e != nil {
+			continue
+		}
+		if e = cleanupRecoveryFile(a, f.FileID, false, f.Reason); e != nil {
+			continue
+		}
+		if e = retryRecoveryRequest(a.Group); e != nil {
+			continue
 		}
 		deleteFeedback(key, f)
 	}
 }
+
 func deleteFeedback(key string, f linkFeedback) {
 	linkFeedbackMu.Lock()
 	defer linkFeedbackMu.Unlock()
@@ -171,6 +202,10 @@ func deleteFeedback(key string, f linkFeedback) {
 func reportBadMedia(i *Item, err error) bool {
 	if os.Getenv("BOT_SERVICE_TOKEN") == "" {
 		return false
+	}
+	var failed failedDownloadError
+	if errors.As(err, &failed) {
+		return queueLinkFeedback(i, "failed", failed.reason) == nil
 	}
 	var bad badMediaError
 	if !errors.As(err, &bad) {
@@ -205,14 +240,28 @@ func checkDownloadBlacklist(i *Item) error {
 		Status string `json:"status"`
 	}
 	status, e := botLinkCall("GET", fmt.Sprintf("/api/v1/link-files/%d", i.FileId), nil, &a)
-	if status == 404 {
+	if status == 404 && isBotNotFound(e) {
 		return nil
 	}
 	if e != nil {
 		return e
 	}
 	if a.Status == "bad" {
-		return errBlacklistedDownload
+		var link recoveryLink
+		if _, e := botLinkCall("GET", fmt.Sprintf("/api/v1/link-files/%d", i.FileId), nil, &link); e != nil {
+			return e
+		}
+		var page struct {
+			Items []recoveryFile `json:"items"`
+		}
+		if _, e := botLinkCall("GET", fmt.Sprintf("/api/v1/links/%d/files", link.ID), nil, &page); e != nil {
+			return e
+		}
+		for _, f := range page.Items {
+			if f.ID == i.FileId && (f.Report == "invalid" || f.Cleanup == "discarded") {
+				return errBlacklistedDownload
+			}
+		}
 	}
 	return nil
 }
@@ -227,4 +276,19 @@ func runLinkFeedback(ctx context.Context) {
 		case <-ticker.C:
 		}
 	}
+}
+
+// Keep server messages out of logs; they can contain source URLs or credentials.
+type botAPIError struct {
+	Status    int
+	Code      string
+	Retryable bool
+}
+
+func (e *botAPIError) Error() string {
+	return fmt.Sprintf("bot API returned HTTP %d (%s)", e.Status, e.Code)
+}
+func isBotNotFound(err error) bool {
+	var e *botAPIError
+	return errors.As(err, &e) && e.Status == 404 && e.Code == "not_found" && !e.Retryable
 }

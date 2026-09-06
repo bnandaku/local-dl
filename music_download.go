@@ -79,6 +79,9 @@ func (i *Item) downloadMusic() error {
 		return fmt.Errorf("music download request failed")
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return failedDownloadError{"file_not_found"}
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("music download returned HTTP %d", resp.StatusCode)
 	}
@@ -102,6 +105,9 @@ func (i *Item) downloadMusic() error {
 		return err
 	}
 	if err := f.Close(); err != nil {
+		return err
+	}
+	if err = detectDownloadFailure(f.Name()); err != nil {
 		return err
 	}
 	metadata, err := readMusicMetadata(f.Name())

@@ -371,6 +371,7 @@ func main() {
 	})
 	r.POST("/download", HandleDownload)
 	r.GET("/queue", Queue)
+	r.GET("/recovery/status", recoveryStatus)
 	r.GET("/catalog/stats", CatalogStats)
 	r.POST("/catalog/scan", CatalogScan)
 	r.GET("/catalog/search", CatalogSearch)
@@ -470,14 +471,13 @@ func HandleDownload(c *gin.Context) {
 		return
 	}
 
-	strings.ReplaceAll(json.Name, " ", ".")
+	added, err := enqueueMusicJob(&json)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "download queue unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Media queued", "already_queued": !added})
 
-	JobsMutex.Lock()
-	Jobs = append(Jobs, &json)
-	queueCount := len(Jobs)
-	JobsMutex.Unlock()
-
-	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("Added to Jobs. Current Queue Count %d", queueCount)})
 }
 
 func Dequeue(ctx context.Context) {
@@ -548,8 +548,9 @@ func Dequeue(ctx context.Context) {
 		go func(j *Item) {
 			if err := j.StartDownload(); err != nil {
 				if errors.Is(err, errBlacklistedDownload) || reportBadMedia(j, err) {
-					if j.Type == Music || isAudioFilename(j.Name) {
-						_ = removeMusicJob(j)
+					if e := removeMusicJob(j); e != nil {
+						logMessage(LogLevelError, "Queue", "Cannot retire rejected file %d: %v", j.FileId, e)
+					} else {
 						forgetMusicJob(j)
 					}
 					logMessage(LogLevelWarn, "Validation", "Rejected invalid media; replacement feedback saved for file %d", j.FileId)
@@ -560,7 +561,7 @@ func Dequeue(ctx context.Context) {
 				JobsMutex.Lock()
 				Jobs = append(Jobs, j)
 				JobsMutex.Unlock()
-			} else if j.Type == Music || isAudioFilename(j.Name) {
+			} else {
 				forgetMusicJob(j)
 			}
 		}(job)
@@ -615,7 +616,6 @@ func GetQueue(ctx context.Context) {
 		pollInterval   = 5 * time.Minute
 		initialBackoff = 30 * time.Second
 		maxBackoff     = 10 * time.Minute
-		maxQueueSize   = 1000
 	)
 
 	logMessage(LogLevelInfo, "QueuePoller", "Started (polling every %s)", pollInterval)
@@ -672,7 +672,6 @@ func GetQueue(ctx context.Context) {
 		}
 
 		items := response.Items
-		acceptedItems := make([]*Item, 0, len(items))
 		for _, item := range items {
 			if item == nil {
 				continue
@@ -681,22 +680,15 @@ func GetQueue(ctx context.Context) {
 				logMessage(LogLevelWarn, "MediaPolicy", "Excluded file %d: %v", item.FileId, err)
 				continue
 			}
-			if item.Type == Music || isAudioFilename(item.Name) {
-				item.Type = Music
-				added, e := enqueueMusicJob(item)
-				if e != nil {
-					logMessage(LogLevelWarn, "QueuePoller", "Cannot durably queue music %d; leaving unclaimed: %v", item.FileId, e)
-					continue
-				}
-				if added {
-					item.InQueue = true
-					UpdateQueue(item)
-				}
+			// Persist every media type before acknowledging the queue claim.
+			_, err := enqueueMusicJob(item)
+			if err != nil {
+				logMessage(LogLevelWarn, "QueuePoller", "Cannot durably queue file %d; leaving unclaimed: %v", item.FileId, err)
 				continue
 			}
-			acceptedItems = append(acceptedItems, item)
+			item.InQueue = true
+			UpdateQueue(item)
 		}
-		items = acceptedItems
 
 		// Check if catalog resync is requested
 		if response.CatalogStatus.NeedsResync {
@@ -708,30 +700,6 @@ func GetQueue(ctx context.Context) {
 					logMessage(LogLevelInfo, "CatalogSync", "Catalog resync completed successfully")
 				}
 			}()
-		}
-
-		// Check queue size limit
-		JobsMutex.Lock()
-		currentQueueSize := len(Jobs)
-		if currentQueueSize+len(items) > maxQueueSize {
-			logMessage(LogLevelWarn, "QueuePoller", "Queue size limit reached (%d/%d). Skipping %d new items.",
-				currentQueueSize, maxQueueSize, len(items))
-			JobsMutex.Unlock()
-		} else {
-			Jobs = append(Jobs, items...)
-			newQueueSize := len(Jobs)
-			JobsMutex.Unlock()
-
-			if len(items) > 0 {
-				logMessage(LogLevelInfo, "QueuePoller", "Added %d new items to queue (total: %d)", len(items), newQueueSize)
-				for _, item := range items {
-					logMessage(LogLevelDebug, "QueuePoller", "  - %s (%s)", item.Name, item.Type)
-					item.InQueue = true
-					UpdateQueue(item)
-				}
-			} else {
-				logMessage(LogLevelDebug, "QueuePoller", "No new items in queue")
-			}
 		}
 
 		// Reset backoff on success

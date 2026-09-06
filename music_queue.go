@@ -114,10 +114,12 @@ func restoreMusicQueue() error {
 	JobsMutex.Lock()
 	defer JobsMutex.Unlock()
 	for _, job := range jobs {
-		if job == nil || (job.Type != Music && !isAudioFilename(job.Name)) {
+		if job == nil {
 			continue
 		}
-		job.Type = Music
+		if isAudioFilename(job.Name) {
+			job.Type = Music
+		}
 		musicKnownJobs[musicJobKey(job)] = true
 		duplicate := false
 		for _, existing := range Jobs {
@@ -159,7 +161,7 @@ func enqueueMusicJob(item *Item) (bool, error) {
 	full := len(Jobs) >= 1000
 	JobsMutex.Unlock()
 	if full {
-		return false, fmt.Errorf("music download queue is full")
+		return false, fmt.Errorf("download queue is full")
 	}
 	if err := persistMusicJob(item); err != nil {
 		return false, err

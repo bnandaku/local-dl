@@ -115,3 +115,21 @@ func TestMusicRestartAndRequestReplayDoNotDuplicateQueuedOrActiveJob(t *testing.
 	}
 	forgetMusicJob(item)
 }
+
+func TestVideoQueueSurvivesRestart(t *testing.T) {
+	t.Setenv("MUSIC_QUEUE_PATH", filepath.Join(t.TempDir(), "queue.json"))
+	old := Jobs
+	Jobs = nil
+	defer func() { Jobs = old }()
+	job := &Item{FileId: 91201, Name: "Example.S01E01.mkv", Type: TVShow, URL: "https://example.test/video"}
+	if e := persistMusicJob(job); e != nil {
+		t.Fatal(e)
+	}
+	if e := restoreMusicQueue(); e != nil {
+		t.Fatal(e)
+	}
+	defer forgetMusicJob(job)
+	if len(Jobs) != 1 || Jobs[0].Type != TVShow {
+		t.Fatal("video queue did not restore with correct library")
+	}
+}

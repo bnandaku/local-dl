@@ -145,6 +145,17 @@ func probeVideo(path string) error {
 // Publish only complete, validated downloads; never truncate an existing movie
 // or expose an in-progress file to Plex's scanner.
 func (i *Item) downloadMedia() error {
+	if record, ok := musicReceiptFor(i); ok && record.Name == i.Name && record.Type == i.Type {
+		if digest, err := musicFileDigest(record.Path); err == nil && digest == record.SHA256 {
+			if err := removeMusicJob(i); err != nil {
+				return err
+			}
+			i.Completed, i.CompletedPercent = true, "100"
+			scheduleMusicAckRetry()
+			return nil
+		}
+	}
+
 	target, err := mediaDestination(i)
 	if err != nil {
 		return err
@@ -169,6 +180,9 @@ func (i *Item) downloadMedia() error {
 		return fmt.Errorf("media request failed")
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return failedDownloadError{"file_not_found"}
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("media HTTP %d", resp.StatusCode)
 	}
@@ -188,6 +202,9 @@ func (i *Item) downloadMedia() error {
 		return err
 	}
 	if err = f.Close(); err != nil {
+		return err
+	}
+	if err = detectDownloadFailure(f.Name()); err != nil {
 		return err
 	}
 	if mediaKind(i.Name) == "subtitle" {
@@ -241,10 +258,10 @@ func (i *Item) downloadMedia() error {
 	if e != nil {
 		return e
 	}
+	if err = removeMusicJob(i); err != nil {
+		return err
+	}
 	if i.Type == Music {
-		if err = removeMusicJob(i); err != nil {
-			return err
-		}
 		TriggerMusicSync()
 	}
 	if mediaKind(i.Name) == "video" {

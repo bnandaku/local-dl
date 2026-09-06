@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -49,7 +50,11 @@ func retryMusicAcknowledgements() {
 			kind = Music
 		}
 		item := Item{Name: record.Name, FileId: record.FileID, Type: kind, Completed: true, CompletedPercent: "100", Started: true, InQueue: true}
-		if err := sendMusicAcknowledgement(item); err != nil {
+		handled, err := recoverPublishedFile(record)
+		if err == nil && !handled {
+			err = sendMusicAcknowledgement(item)
+		}
+		if err != nil {
 			logMessage(LogLevelWarn, "Music", "Source receipt for file %d will retry: %v", record.FileID, err)
 			continue
 		}
@@ -99,6 +104,9 @@ func sendMusicAcknowledgement(item Item) error {
 
 func InitMusicIngest(ctx context.Context) {
 	go runLinkFeedback(ctx)
+	if os.Getenv("BOT_SERVICE_TOKEN") != "" {
+		go runRecoveryMonitor(ctx)
+	}
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
