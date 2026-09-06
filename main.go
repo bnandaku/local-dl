@@ -33,7 +33,7 @@ var CurrentJobsMutex sync.Mutex
 
 // Regex patterns to match season and episode
 // Pattern 1: S01E02, s01e02, S1E1
-var tvShowPattern = regexp.MustCompile(`(?i)s(\d{1,2})e(\d{1,2})`)
+var tvShowPattern = regexp.MustCompile(`(?i)s(\d{1,2})[\s._-]*e(\d{1,3})`)
 
 // Pattern 2: Season 02 - 01, season 2 - 1
 var tvShowPatternSpelled = regexp.MustCompile(`(?i)season\s+(\d{1,2})\s*-\s*(\d{1,3})`)
@@ -300,6 +300,14 @@ func parseMovieInfo(filename string) MovieInfo {
 }
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "repair-file" {
+		MoviesPath = "/mnt/movies"
+		TVShowPath = "/mnt/tvshows"
+		if err := repairLibraryFile(os.Args[2]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	logMessage(LogLevelInfo, "Main", "=== Local Plex Download Manager Starting ===")
 
 	CurrentJobs = make(map[string]*Item)
@@ -385,105 +393,13 @@ func (i *Item) StartDownload() error {
 	logMessage(LogLevelInfo, "Download", "Starting download for: %s (Type: %s)", i.Name, i.Type)
 	i.Started = true
 
-	if i.Type == Music || isAudioFilename(i.Name) {
+	if err := routeMedia(i); err != nil {
+		return err
+	}
+	if mediaKind(i.Name) == "audio" {
 		return i.downloadMusic()
 	}
-
-	// Determine base destination
-	destination := MoviesPath
-	filename := i.Name // Default to original name
-
-	if i.Type == TVShow {
-		destination = TVShowPath
-
-		// Parse TV show info and create proper folder structure
-		tvInfo := parseTVShowInfo(i.Name)
-		if tvInfo.HasSeasonInfo {
-			logMessage(LogLevelInfo, "Download", "Parsed TV show: %s - Season %s Episode %s",
-				tvInfo.ShowName, tvInfo.Season, tvInfo.Episode)
-
-			// Use standardized filename
-			filename = tvInfo.StandardName
-			logMessage(LogLevelInfo, "Download", "Standardizing filename: %s -> %s", i.Name, filename)
-
-			// Build the proper path with show name and season folders
-			seasonPath, err := buildTVShowPath(destination, tvInfo)
-			if err != nil {
-				logMessage(LogLevelError, "Download", "Failed to create directory structure: %v", err)
-				return err
-			}
-			destination = seasonPath
-		} else {
-			logMessage(LogLevelWarn, "Download", "No season/episode info found in filename: %s", i.Name)
-		}
-	}
-
-	// Build full file path with standardized filename
-	fullPath := filepath.Join(destination, filename)
-	logMessage(LogLevelDebug, "Download", "Destination path: %s", fullPath)
-
-	start := time.Now()
-
-	// Create the file
-	out, err := os.Create(fullPath)
-	if err != nil {
-		logMessage(LogLevelError, "Download", "Failed to create file %s: %v", fullPath, err)
-		return err
-	}
-	defer out.Close()
-
-	// Get file size
-	headResp, err := http.Head(i.URL)
-	if err != nil {
-		logMessage(LogLevelError, "Download", "Failed to get file size for %s: %v", i.Name, err)
-		return err
-	}
-	defer headResp.Body.Close()
-
-	size, err := strconv.Atoi(headResp.Header.Get("Content-Length"))
-	if err != nil {
-		logMessage(LogLevelError, "Download", "Invalid Content-Length for %s: %v", i.Name, err)
-		return err
-	}
-
-	sizeMB := float64(size) / 1024 / 1024
-	logMessage(LogLevelInfo, "Download", "File size: %.2f MB", sizeMB)
-
-	// Start progress tracking
-	done := make(chan int64)
-	go i.UpdateDownloadPercent(done, fullPath, int64(size))
-
-	// Download the file
-	resp, err := http.Get(i.URL)
-	if err != nil {
-		logMessage(LogLevelError, "Download", "Failed to download %s: %v", i.Name, err)
-		return err
-	}
-	defer resp.Body.Close()
-
-	n, err := io.Copy(out, resp.Body)
-	if err != nil {
-		logMessage(LogLevelError, "Download", "Failed to write file %s: %v", i.Name, err)
-		return err
-	}
-
-	done <- n
-
-	elapsed := time.Since(start)
-	speedMBps := sizeMB / elapsed.Seconds()
-	logMessage(LogLevelInfo, "Download", "✓ Completed: %s | Size: %.2f MB | Time: %s | Speed: %.2f MB/s",
-		filename, sizeMB, elapsed.Round(time.Second), speedMBps)
-
-	update(filename)
-	i.Completed = true
-	UpdateQueue(i)
-
-	// Add file to catalog
-	if err := AddFileToCatalog(fullPath); err != nil {
-		logMessage(LogLevelWarn, "Catalog", "Failed to add file to catalog: %v", err)
-	}
-
-	return nil
+	return i.downloadMedia()
 }
 
 func update(name string) {
@@ -525,6 +441,11 @@ func HandleDownload(c *gin.Context) {
 		// fmt.Println(err)
 		return
 	}
+	if err := routeMedia(&json); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	json.Started, json.Completed, json.InQueue = false, false, false
 	isMusic := json.Type == Music || isAudioFilename(json.Name)
 	if isMusic {
 		token := os.Getenv("MUSIC_API_TOKEN")
@@ -742,6 +663,10 @@ func GetQueue(ctx context.Context) {
 			if item == nil {
 				continue
 			}
+			if err := routeMedia(item); err != nil {
+				logMessage(LogLevelWarn, "MediaPolicy", "Excluded file %d: %v", item.FileId, err)
+				continue
+			}
 			if item.Type == Music || isAudioFilename(item.Name) {
 				item.Type = Music
 				added, e := enqueueMusicJob(item)
@@ -913,6 +838,9 @@ func UpdateQueue(item *Item) {
 }
 
 type Item struct {
+	RelativePath     string      `json:"relative_path,omitempty"`
+	MediaName        string      `json:"media_name,omitempty"`
+	MediaFileID      int64       `json:"media_file_id,omitempty"`
 	URL              string      `json:"url"`
 	Type             ContentType `json:"type"`
 	Name             string      `json:"name"`

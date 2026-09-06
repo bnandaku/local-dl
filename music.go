@@ -36,7 +36,7 @@ func isAudioFilename(name string) bool {
 func readMusicMetadata(path string) (MusicMetadata, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-protocol_whitelist", "file", "-show_entries", "format_tags:stream=codec_type:stream_tags", "-of", "json", path)
+	cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-protocol_whitelist", "file", "-show_entries", "format_tags:stream=codec_type:stream_tags:stream_disposition=attached_pic", "-of", "json", path)
 	output := &limitedMusicOutput{max: 1024 * 1024}
 	cmd.Stdout = output
 	if err := cmd.Run(); err != nil {
@@ -47,7 +47,10 @@ func readMusicMetadata(path string) (MusicMetadata, error) {
 			Tags map[string]string `json:"tags"`
 		} `json:"format"`
 		Streams []struct {
-			Type string            `json:"codec_type"`
+			Type        string `json:"codec_type"`
+			Disposition struct {
+				Attached int `json:"attached_pic"`
+			} `json:"disposition"`
 			Tags map[string]string `json:"tags"`
 		} `json:"streams"`
 	}
@@ -57,6 +60,9 @@ func readMusicMetadata(path string) (MusicMetadata, error) {
 	tags := make(map[string]string)
 	audio := false
 	for _, stream := range probe.Streams {
+		if stream.Type == "video" && stream.Disposition.Attached == 0 {
+			return MusicMetadata{}, fmt.Errorf("video stream is not allowed in music")
+		}
 		if stream.Type == "audio" {
 			audio = true
 			for key, value := range stream.Tags {
