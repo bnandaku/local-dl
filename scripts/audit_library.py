@@ -6,11 +6,13 @@ under a timestamped directory and recorded in a manifest; nothing is deleted.
 """
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import errno
 import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -47,6 +49,57 @@ def _category(ext):
     if ext in SUBTITLES:
         return "subtitle"
     return None
+
+
+def _probe_media(path):
+    """Return (status, reason), without exposing ffprobe stderr."""
+    try:
+        if os.path.getsize(path) <= 65536:
+            with open(path, "rb") as source:
+                payload = source.read(65537).strip()
+            if not payload:
+                return "invalid_media", "empty_file"
+            if payload.startswith(b"MZ") or payload.lower().startswith((b"<!doctype html", b"<html")):
+                return "invalid_media", "non_media_payload"
+            try:
+                error = json.loads(payload)
+                if isinstance(error, dict) and ("error_type" in error or "error_message" in error):
+                    return "invalid_media", "download_error_response"
+            except (ValueError, UnicodeError):
+                pass
+    except OSError:
+        return "probe_error", "source_unavailable"
+    if _extension(path) in SUBTITLES:
+        return "valid", ""
+    try:
+        completed = subprocess.run(
+            ["ffprobe", "-v", "error", "-protocol_whitelist", "file", "-print_format", "json", "-show_entries", "stream=codec_type,codec_name:stream_disposition=attached_pic", str(path)],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=30, check=False)
+    except subprocess.TimeoutExpired:
+        return "probe_error", "timeout"
+    except OSError:
+        return "probe_error", "ffprobe_unavailable"
+    if completed.returncode != 0:
+        return "invalid_media", "ffprobe_failed"
+    try:
+        streams = json.loads(completed.stdout).get("streams", [])
+    except (TypeError, ValueError):
+        return "probe_error", "invalid_probe_json"
+    audio = [s for s in streams if s.get("codec_type") == "audio"]
+    video = [s for s in streams if s.get("codec_type") == "video" and
+             not (s.get("disposition") or {}).get("attached_pic")]
+    ext = _extension(path)
+    if ext in AUDIO:
+        if not audio:
+            return "invalid_media", "no_audio_stream"
+        if video:
+            return "invalid_media", "unexpected_video_stream"
+    elif ext in ART:
+        if not streams or any(s.get("codec_type") != "video" or s.get("codec_name") not in {"png", "mjpeg", "gif", "webp", "bmp", "tiff"} for s in streams):
+            return "invalid_media", "invalid_artwork"
+    elif ext in VIDEO and not video:
+        return "invalid_media", "no_video_stream"
+    return "valid", ""
 
 
 def _entry(path, library, kind, reason):
@@ -118,13 +171,14 @@ def _quarantine_one(source, destination, original):
     return None
 
 
-def audit_library(root, apply=False, report=None):
+def audit_library(root, apply=False, report=None, probe=False):
     root = Path(root).absolute()
     if not root.is_dir():
         raise ValueError("root must be a directory")
     records = []
     counts = {"files": 0, "recognized": 0, "garbage": 0, "misplaced": 0,
-              "quarantined": 0, "errors": 0, "skipped_symlinks": 0, "skipped_staging": 0}
+              "quarantined": 0, "errors": 0, "skipped_symlinks": 0, "skipped_staging": 0,
+              "invalid_media": 0, "probe_errors": 0}
     quarantine_dir = None
     if apply:
         quarantine_base = root / ".local-dl-quarantine"
@@ -141,6 +195,7 @@ def audit_library(root, apply=False, report=None):
         quarantine_dir.mkdir()
 
     journal = []
+    probe_candidates = []
 
     def persist_journal():
         if quarantine_dir is None:
@@ -229,6 +284,9 @@ def audit_library(root, apply=False, report=None):
                         records.append(rec)
                         continue
                     counts["recognized"] += 1
+                    if probe and kind in ("audio", "video", "art", "subtitle"):
+                        probe_candidates.append((path, library, kind, st))
+                        continue
                     misplaced = ((kind == "audio" and library != "music") or
                                  (kind == "video" and library == "music") or
                                  (kind == "video" and library == "movies" and
@@ -237,7 +295,50 @@ def audit_library(root, apply=False, report=None):
                         counts["misplaced"] += 1
                         records.append(_entry(path, library, kind, "misplaced"))
 
-    result = {"root": str(root), "apply": bool(apply), "counts": counts, "items": records,
+    if probe_candidates:
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            outcomes = executor.map(lambda candidate: _probe_media(candidate[0]), probe_candidates)
+            for (path, library, kind, st), (status, reason) in zip(probe_candidates, outcomes):
+                if status == "probe_error":
+                    counts["probe_errors"] += 1
+                    counts["errors"] += 1
+                    rec = _entry(path, library, kind, reason)
+                    rec["size"] = st.st_size
+                    records.append(rec)
+                    continue
+                if status == "invalid_media":
+                    counts["invalid_media"] += 1
+                    rec = _entry(path, library, kind, "invalid_media")
+                    rec["detail"] = reason
+                    rec["size"] = st.st_size
+                    if apply:
+                        relative = path.relative_to(root / library)
+                        dest = _safe_destination(quarantine_dir / library, relative)
+                        rec["destination"] = str(dest)
+                        rec["status"] = "pending"
+                        journal.append(rec.copy())
+                        persist_journal()
+                        error = _quarantine_one(path, dest, (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns))
+                        if error is None:
+                            counts["quarantined"] += 1
+                            journal[-1]["status"] = "moved"
+                        else:
+                            counts["errors"] += 1
+                            rec["error"] = error
+                            journal[-1]["status"] = "error"
+                            journal[-1]["error"] = error
+                        persist_journal()
+                    records.append(rec)
+                    continue
+                misplaced = ((kind == "audio" and library != "music") or
+                             (kind == "video" and library == "music") or
+                             (kind == "video" and library == "movies" and
+                              is_episode(str(path.relative_to(root / library)))))
+                if misplaced:
+                    counts["misplaced"] += 1
+                    records.append(_entry(path, library, kind, "misplaced"))
+
+    result = {"root": str(root), "apply": bool(apply), "probe": bool(probe), "counts": counts, "items": records,
               "garbage": [item for item in records if item["kind"] == "garbage"],
               "misplaced": [item for item in records if item["reason"] == "misplaced"]}
     if quarantine_dir is not None:
@@ -254,9 +355,10 @@ def main(argv=None):
     parser.add_argument("--root", required=True, help="media root containing movies, tv, and music")
     parser.add_argument("--report", help="write JSON report to this path")
     parser.add_argument("--apply", action="store_true", help="move garbage to quarantine")
+    parser.add_argument("--probe", action="store_true", help="validate audio/video streams with ffprobe")
     args = parser.parse_args(argv)
     try:
-        result = audit_library(args.root, apply=args.apply, report=args.report)
+        result = audit_library(args.root, apply=args.apply, report=args.report, probe=args.probe)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
     print(json.dumps(result, indent=2))

@@ -4,10 +4,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from audit_library import audit_library, is_episode
+from audit_library import _probe_media, audit_library, is_episode
 
 
 class AuditLibraryTests(unittest.TestCase):
@@ -109,6 +110,55 @@ class AuditLibraryTests(unittest.TestCase):
             os.symlink(outside, root / ".local-dl-quarantine")
             with self.assertRaises(ValueError):
                 audit_library(root, apply=True)
+
+    def test_probe_invalid_media_is_quarantined_only_with_probe_apply(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            for name in ("movies", "tv", "music"):
+                (root / name).mkdir()
+            bad = root / "music" / "putio-error.mp3"
+            bad.write_text('{"error":"not audio"}')
+            with mock.patch("audit_library._probe_media", return_value=("invalid_media", "no_audio_stream")):
+                report = audit_library(root, apply=True, probe=True)
+            self.assertEqual(report["counts"]["invalid_media"], 1)
+            self.assertEqual(report["counts"]["quarantined"], 1)
+            self.assertFalse(bad.exists())
+
+    def test_probe_timeout_is_scan_error_and_never_quarantined(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            for name in ("movies", "tv", "music"):
+                (root / name).mkdir()
+            partial = root / "music" / "slow.mp3"
+            partial.write_bytes(b"partial")
+            with mock.patch("audit_library._probe_media", return_value=("probe_error", "timeout")):
+                report = audit_library(root, apply=True, probe=True)
+            self.assertEqual(report["counts"]["invalid_media"], 0)
+            self.assertEqual(report["counts"]["probe_errors"], 1)
+            self.assertEqual(report["counts"]["quarantined"], 0)
+            self.assertTrue(partial.exists())
+
+    def test_probe_requires_audio_and_rejects_attached_only_video(self):
+        completed = subprocess.CompletedProcess([], 0, json.dumps({"streams": [
+            {"codec_type": "video", "disposition": {"attached_pic": 1}},
+            {"codec_type": "audio"},
+        ]}), "")
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "track.mp3"
+            path.write_bytes(b"audio fixture")
+            with mock.patch("audit_library.subprocess.run", return_value=completed):
+                self.assertEqual(_probe_media(path), ("valid", ""))
+
+    def test_download_error_disguised_as_subtitle_is_quarantined(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "movies").mkdir()
+            path = root / "movies" / "movie.sub"
+            path.write_text('{"error_type":"expired","error_message":"download failed"}')
+            result = audit_library(root, apply=True, probe=True)
+            self.assertEqual(result["counts"]["invalid_media"], 1)
+            self.assertEqual(result["counts"]["quarantined"], 1)
+            self.assertFalse(path.exists())
 
 
 if __name__ == "__main__":

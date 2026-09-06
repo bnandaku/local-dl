@@ -16,7 +16,8 @@ before download. Small files are allowed when their format is supported. Artwork
 and subtitles carry an explicit primary-media association; ambiguous supporting
 files remain at the source instead of being guessed into a library. Music artwork
 waits for the associated audio import so it can use the tagged album directory.
-Movie imports use a per-movie directory; matched subtitles retain language suffixes
+Video supports also wait for a verified primary receipt and follow its actual
+published path, including collision suffixes. Movie imports use a per-movie directory; matched subtitles retain language suffixes
 and follow the standardized episode name. Associated trailers use a Trailers folder.
 
 Audio is probed and rejects moving video streams (embedded cover art is allowed).
@@ -27,8 +28,11 @@ without overwriting existing media. Unknown files are never acknowledged as impo
 ## Existing library audit
 
 `python3 scripts/audit_library.py --root /path/to/media --report audit.json`
-scans movies, tv and music recursively without following symlinks. It reports
-unknown files and audio/video in the wrong libraries. `--apply` moves unknown
+scans movies, tv and music recursively without following symlinks. Add `--probe`
+to validate audio/video streams and artwork, and detect failed-download payloads
+in subtitles. Probe timeouts or unavailable tooling are reported as scan errors
+and never quarantined. It reports
+unknown files and audio/video in the wrong libraries. `--apply --probe` moves unknown or invalid
 files outside those libraries into `.local-dl-quarantine/<run>/` and records an
 fsynced recovery journal. It never permanently deletes them or guesses a destination
 for recognized media. Active staging files and `.plexignore` are retained.

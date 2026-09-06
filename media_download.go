@@ -185,6 +185,24 @@ func (i *Item) downloadMedia() error {
 	if err = f.Close(); err != nil {
 		return err
 	}
+	if mediaKind(i.Name) == "subtitle" {
+		input, e := os.Open(f.Name())
+		if e != nil {
+			return e
+		}
+		data, e := io.ReadAll(io.LimitReader(input, 65537))
+		input.Close()
+		if e != nil {
+			return e
+		}
+		text := strings.TrimSpace(string(data))
+		lower := strings.ToLower(text)
+		var payload map[string]json.RawMessage
+		jsonError := json.Unmarshal(data, &payload) == nil && (payload["error_type"] != nil || payload["error_message"] != nil)
+		if text == "" || strings.HasPrefix(text, "MZ") || strings.HasPrefix(lower, "<!doctype html") || strings.HasPrefix(lower, "<html") || jsonError {
+			return fmt.Errorf("subtitle contains a non-media error payload")
+		}
+	}
 	if mediaKind(i.Name) == "video" {
 		if err = probeVideo(f.Name()); err != nil {
 			return err

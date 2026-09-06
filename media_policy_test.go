@@ -99,6 +99,15 @@ func TestSupportDestinations(t *testing.T) {
 	if strings.TrimSuffix(got, ".en.srt") != strings.TrimSuffix(want, ".mkv") {
 		t.Fatalf("%s vs %s", got, want)
 	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"error_type":"expired"}`)) }))
+	defer srv.Close()
+	side.URL = srv.URL
+	if e := side.downloadMedia(); e == nil {
+		t.Fatal("error response published as subtitle")
+	}
+	if _, e := os.Stat(got); !os.IsNotExist(e) {
+		t.Fatal("invalid subtitle published")
+	}
 	os.WriteFile(want, []byte("changed"), 0644)
 	if _, e := mediaDestination(&side); e == nil {
 		t.Fatal("support accepted changed primary")
