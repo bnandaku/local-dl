@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -25,6 +27,8 @@ type PlexTrack struct {
 	Album           string
 	Duration        int64
 	Genres          []string
+	Files           []string
+	ISRC            string
 }
 type plexPlaylist struct {
 	ID    int64
@@ -54,8 +58,14 @@ type plexXMLMetadata struct {
 	ParentRatingKey  string `xml:"parentRatingKey,attr"`
 	PlaylistItemID   string `xml:"playlistItemID,attr"`
 	GrandparentTitle string `xml:"grandparentTitle,attr"`
-	Duration         int64  `xml:"duration,attr"`
-	Genre            []struct {
+	OriginalTitle    string `xml:"originalTitle,attr"`
+	Media            []struct {
+		Parts []struct {
+			File string `xml:"file,attr"`
+		} `xml:"Part"`
+	} `xml:"Media"`
+	Duration int64 `xml:"duration,attr"`
+	Genre    []struct {
 		Tag string `xml:"tag,attr"`
 	} `xml:"Genre"`
 	PlaylistType string `xml:"playlistType,attr"`
@@ -72,9 +82,11 @@ func (p *plexClient) request(ctx context.Context, method, path string, body io.R
 	}
 	req.Header.Set("X-Plex-Token", p.token)
 	req.Header.Set("Accept", "application/xml, application/json")
-	res, err := p.http.Do(req)
+	client := *p.http
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	res, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Plex request failed")
 	}
 	if res.ContentLength > 8<<20 {
 		res.Body.Close()
@@ -84,16 +96,55 @@ func (p *plexClient) request(ctx context.Context, method, path string, body io.R
 }
 
 func (p *plexClient) tracks(ctx context.Context) ([]PlexTrack, error) {
-	var all []PlexTrack
-	for start := 0; ; start += 500 {
-		path := fmt.Sprintf("/library/sections/%s/all?type=10&X-Plex-Container-Start=%d&X-Plex-Container-Size=500", url.PathEscape(p.section), start)
+	entries, err := p.libraryEntries(ctx, 10)
+	if err != nil {
+		return nil, err
+	}
+	albums, err := p.libraryEntries(ctx, 9)
+	if err != nil {
+		return nil, err
+	}
+	genres := map[string][]string{}
+	for _, album := range albums {
+		for _, g := range album.Genre {
+			genres[album.RatingKey] = append(genres[album.RatingKey], g.Tag)
+		}
+	}
+	all := make([]PlexTrack, 0, len(entries))
+	for _, x := range entries {
+		artist := x.OriginalTitle
+		if artist == "" {
+			artist = x.GrandparentTitle
+		}
+		t := PlexTrack{RatingKey: x.RatingKey, ParentRatingKey: x.ParentRatingKey, Title: x.Title, Artist: artist, Album: x.ParentTitle, Duration: x.Duration}
+		for _, g := range x.Genre {
+			t.Genres = append(t.Genres, g.Tag)
+		}
+		if len(t.Genres) == 0 {
+			t.Genres = genres[x.ParentRatingKey]
+		}
+		for _, media := range x.Media {
+			for _, part := range media.Parts {
+				t.Files = append(t.Files, part.File)
+			}
+		}
+		all = append(all, t)
+	}
+	return all, nil
+}
+
+func (p *plexClient) libraryEntries(ctx context.Context, kind int) ([]plexXMLMetadata, error) {
+	var all []plexXMLMetadata
+	seen := map[string]bool{}
+	for page := 0; page < 2000; page++ {
+		path := fmt.Sprintf("/library/sections/%s/all?type=%d&X-Plex-Container-Start=%d&X-Plex-Container-Size=500", url.PathEscape(p.section), kind, len(all))
 		res, err := p.request(ctx, http.MethodGet, path, nil)
 		if err != nil {
 			return nil, err
 		}
 		if res.StatusCode/100 != 2 {
 			res.Body.Close()
-			return nil, fmt.Errorf("plex library returned %s", res.Status)
+			return nil, fmt.Errorf("Plex library returned HTTP %d", res.StatusCode)
 		}
 		var c plexXMLContainer
 		err = xml.NewDecoder(io.LimitReader(res.Body, 8<<20)).Decode(&c)
@@ -101,70 +152,72 @@ func (p *plexClient) tracks(ctx context.Context) ([]PlexTrack, error) {
 		if err != nil {
 			return nil, err
 		}
-		entries := append(c.Metadata, c.Track...)
-		for _, x := range entries {
-			t := PlexTrack{RatingKey: x.RatingKey, ParentRatingKey: x.ParentRatingKey, Title: x.Title, Artist: x.GrandparentTitle, Album: x.ParentTitle, Duration: x.Duration}
-			for _, g := range x.Genre {
-				t.Genres = append(t.Genres, g.Tag)
+		entries := append(append(c.Metadata, c.Track...), c.Directory...)
+		for _, entry := range entries {
+			if entry.RatingKey == "" || seen[entry.RatingKey] {
+				return nil, fmt.Errorf("Plex library pagination repeated or omitted track identity")
 			}
-			all = append(all, t)
+			seen[entry.RatingKey] = true
 		}
-		if len(entries) == 0 || len(entries) < 500 || c.TotalSize > 0 && len(all) >= c.TotalSize {
-			break
-		}
-	}
-	albumGenres := make(map[string][]string)
-	for _, track := range all {
-		if track.ParentRatingKey == "" || len(track.Genres) != 0 || albumGenres[track.ParentRatingKey] != nil {
-			continue
-		}
-		res, e := p.request(ctx, http.MethodGet, "/library/metadata/"+url.PathEscape(track.ParentRatingKey), nil)
-		if e != nil {
-			return nil, fmt.Errorf("hydrate album genres: %w", e)
-		}
-		var c plexXMLContainer
-		e = xml.NewDecoder(io.LimitReader(res.Body, 2<<20)).Decode(&c)
-		res.Body.Close()
-		if e != nil {
-			return nil, fmt.Errorf("decode album genres: %w", e)
-		}
-		albumEntries := append(c.Metadata, c.Directory...)
-		for _, x := range albumEntries {
-			for _, g := range x.Genre {
-				albumGenres[track.ParentRatingKey] = append(albumGenres[track.ParentRatingKey], g.Tag)
+		all = append(all, entries...)
+		if c.TotalSize > 0 {
+			if len(all) >= c.TotalSize {
+				return all, nil
 			}
+			if len(entries) == 0 {
+				return nil, fmt.Errorf("Plex library pagination ended early")
+			}
+		} else if len(entries) < 500 {
+			return all, nil
 		}
 	}
-	for i := range all {
-		if len(all[i].Genres) == 0 {
-			all[i].Genres = albumGenres[all[i].ParentRatingKey]
-		}
-	}
-	return all, nil
+	return nil, fmt.Errorf("Plex library pagination exceeds limit")
 }
 
 func (p *plexClient) playlists(ctx context.Context) ([]plexPlaylist, error) {
-	res, err := p.request(ctx, http.MethodGet, "/playlists", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-	if res.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("plex playlists returned %s", res.Status)
-	}
-	var c plexXMLContainer
-	if err := xml.NewDecoder(io.LimitReader(res.Body, 8<<20)).Decode(&c); err != nil {
-		return nil, err
-	}
-	out := make([]plexPlaylist, 0, len(c.Metadata))
-	entries := append(c.Metadata, c.Playlist...)
-	for _, x := range entries {
-		if x.PlaylistType == "audio" || x.PlaylistType == "" {
-			id, _ := strconv.ParseInt(x.RatingKey, 10, 64)
-			out = append(out, plexPlaylist{ID: id, Title: x.Title})
+	var out []plexPlaylist
+	consumed := 0
+	seen := map[int64]bool{}
+	for page := 0; page < 2000; page++ {
+		path := fmt.Sprintf("/playlists?X-Plex-Container-Start=%d&X-Plex-Container-Size=500", consumed)
+		res, err := p.request(ctx, http.MethodGet, path, nil)
+		if err != nil {
+			return nil, err
+		}
+		if res.StatusCode/100 != 2 {
+			res.Body.Close()
+			return nil, fmt.Errorf("Plex playlists returned HTTP %d", res.StatusCode)
+		}
+		var c plexXMLContainer
+		err = xml.NewDecoder(io.LimitReader(res.Body, 8<<20)).Decode(&c)
+		res.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		entries := append(c.Metadata, c.Playlist...)
+		for _, x := range entries {
+			id, err := strconv.ParseInt(x.RatingKey, 10, 64)
+			if err != nil || id <= 0 || seen[id] {
+				return nil, fmt.Errorf("Plex playlists pagination repeated or omitted identity")
+			}
+			seen[id] = true
+			if x.PlaylistType == "audio" || x.PlaylistType == "" {
+				out = append(out, plexPlaylist{ID: id, Title: x.Title})
+			}
+		}
+		consumed += len(entries)
+		if c.TotalSize > 0 {
+			if consumed >= c.TotalSize {
+				return out, nil
+			}
+			if len(entries) == 0 {
+				return nil, fmt.Errorf("Plex playlists pagination ended early")
+			}
+		} else if len(entries) < 500 {
+			return out, nil
 		}
 	}
-	return out, nil
+	return nil, fmt.Errorf("Plex playlists pagination exceeds limit")
 }
 
 func (p *plexClient) createPlaylist(ctx context.Context, title string, tracks []PlexTrack) (int64, error) {
@@ -175,9 +228,9 @@ func (p *plexClient) createPlaylist(ctx context.Context, title string, tracks []
 	for _, t := range tracks {
 		keys = append(keys, t.RatingKey)
 	}
-	machine := os.Getenv("PLEX_MACHINE_IDENTIFIER")
-	if machine == "" {
-		machine = "local"
+	machine, err := p.serverID(ctx)
+	if err != nil {
+		return 0, err
 	}
 	uri := "server://" + machine + "/com.plexapp.plugins.library/library/metadata/" + strings.Join(keys, ",")
 	form := url.Values{"title": {title}, "type": {"audio"}, "smart": {"0"}, "uri": {uri}}
@@ -202,8 +255,8 @@ func (p *plexClient) createPlaylist(ctx context.Context, title string, tracks []
 
 func (p *plexClient) playlistItems(ctx context.Context, id int64) ([]PlexTrack, error) {
 	var out []PlexTrack
-	for start := 0; ; start += 500 {
-		res, err := p.request(ctx, http.MethodGet, fmt.Sprintf("/playlists/%d/items?X-Plex-Container-Start=%d&X-Plex-Container-Size=500", id, start), nil)
+	for page := 0; page < 2000; page++ {
+		res, err := p.request(ctx, http.MethodGet, fmt.Sprintf("/playlists/%d/items?X-Plex-Container-Start=%d&X-Plex-Container-Size=500", id, len(out)), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -218,13 +271,24 @@ func (p *plexClient) playlistItems(ctx context.Context, id int64) ([]PlexTrack, 
 			return nil, err
 		}
 		entries := append(c.Metadata, c.Track...)
+		if page > 0 && len(entries) > 0 && entries[0].PlaylistItemID != "" && entries[0].PlaylistItemID == out[0].PlaylistItemID {
+			return nil, fmt.Errorf("Plex playlist pagination repeated a page")
+		}
 		for _, x := range entries {
 			out = append(out, PlexTrack{RatingKey: x.RatingKey, PlaylistItemID: x.PlaylistItemID, Title: x.Title, Artist: x.GrandparentTitle, Album: x.ParentTitle, Duration: x.Duration})
 		}
-		if len(entries) == 0 || len(entries) < 500 || c.TotalSize > 0 && len(out) >= c.TotalSize {
+		if c.TotalSize > 0 {
+			if len(out) >= c.TotalSize {
+				return out, nil
+			}
+			if len(entries) == 0 {
+				return nil, fmt.Errorf("Plex playlist pagination ended early")
+			}
+		} else if len(entries) < 500 {
 			return out, nil
 		}
 	}
+	return nil, fmt.Errorf("Plex playlist pagination exceeds limit")
 }
 
 func (p *plexClient) machineIdentifier(ctx context.Context) (string, error) {
@@ -298,7 +362,7 @@ func (p *plexClient) addTracks(ctx context.Context, id int64, tracks []PlexTrack
 func (p *plexClient) removeTrack(ctx context.Context, id int64, item PlexTrack) error {
 	itemID := item.PlaylistItemID
 	if itemID == "" {
-		itemID = item.RatingKey
+		return fmt.Errorf("Plex playlist item ID is missing")
 	}
 	res, err := p.request(ctx, http.MethodDelete, fmt.Sprintf("/playlists/%d/items/%s", id, url.PathEscape(itemID)), nil)
 	if err != nil {
@@ -315,13 +379,13 @@ func (p *plexClient) removeTrack(ctx context.Context, id int64, item PlexTrack) 
 func (p *plexClient) moveTrack(ctx context.Context, id int64, item PlexTrack, after *PlexTrack) error {
 	itemID := item.PlaylistItemID
 	if itemID == "" {
-		itemID = item.RatingKey
+		return fmt.Errorf("Plex playlist item ID is missing")
 	}
 	path := fmt.Sprintf("/playlists/%d/items/%s/move", id, url.PathEscape(itemID))
 	if after != nil {
 		afterID := after.PlaylistItemID
 		if afterID == "" {
-			afterID = after.RatingKey
+			return fmt.Errorf("Plex predecessor item ID is missing")
 		}
 		path += "?after=" + url.QueryEscape(afterID)
 	}
@@ -368,6 +432,20 @@ func (p *plexClient) reconcilePlaylist(ctx context.Context, id int64, desired []
 			present[item.RatingKey]--
 		}
 	}
+	afterAdd, err := p.playlistItems(ctx, id)
+	if err != nil {
+		return err
+	}
+	counts := map[string]int{}
+	for _, item := range afterAdd {
+		counts[item.RatingKey]++
+	}
+	for _, item := range desired {
+		if counts[item.RatingKey] <= 0 {
+			return fmt.Errorf("Plex did not retain requested playlist occurrences")
+		}
+		counts[item.RatingKey]--
+	}
 	wanted := make(map[string]int, len(desired))
 	for _, item := range desired {
 		wanted[item.RatingKey]++
@@ -397,7 +475,7 @@ func (p *plexClient) reconcilePlaylist(ctx context.Context, id int64, desired []
 			}
 		}
 		if at < 0 {
-			continue
+			return fmt.Errorf("Plex did not retain all requested playlist occurrences")
 		}
 		var after *PlexTrack
 		if i > 0 {
@@ -414,6 +492,19 @@ func (p *plexClient) reconcilePlaylist(ctx context.Context, id int64, desired []
 			current = append(current[:i], append([]PlexTrack{item}, current[i:]...)...)
 		}
 	}
+	final, err := p.playlistItems(ctx, id)
+	if err != nil {
+		return err
+	}
+	if len(final) != len(desired) {
+		return fmt.Errorf("Plex playlist length did not converge")
+	}
+	for i := range final {
+		if final[i].RatingKey != desired[i].RatingKey {
+			return fmt.Errorf("Plex playlist order did not converge")
+		}
+	}
+
 	return nil
 }
 
@@ -425,12 +516,20 @@ type playlistManager struct {
 	ctx     context.Context
 	trigger chan struct{}
 	once    sync.Once
+	scan    atomic.Bool
 }
 
 func InitMusicPlaylists(ctx context.Context, r *gin.Engine) error {
 	base, token, section := os.Getenv("PLEX_URL"), os.Getenv("PLEX_TOKEN"), os.Getenv("PLEX_MUSIC_SECTION_ID")
 	if base == "" || token == "" || section == "" {
 		return nil
+	}
+	parsed, e := url.Parse(base)
+	if e != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("PLEX_URL must be an HTTP(S) server URL without credentials or query")
+	}
+	if _, e := strconv.ParseUint(section, 10, 64); e != nil {
+		return fmt.Errorf("PLEX_MUSIC_SECTION_ID must be numeric")
 	}
 	dir := os.Getenv("MUSIC_PLAYLIST_DIR")
 	if dir == "" {
@@ -448,12 +547,13 @@ func InitMusicPlaylists(ctx context.Context, r *gin.Engine) error {
 		r.POST("/music/sync", musicAuth(api), m.syncNow)
 	}
 	m.once.Do(func() { go m.loop() })
+	m.requestSync()
 	return nil
 }
 
 func musicAuth(token string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.GetHeader("Authorization") != "Bearer "+token {
+		if subtle.ConstantTimeCompare([]byte(c.GetHeader("Authorization")), []byte("Bearer "+token)) != 1 {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}
@@ -461,8 +561,9 @@ func musicAuth(token string) gin.HandlerFunc {
 	}
 }
 func (m *playlistManager) importManifest(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<20)
 	var in PlaylistManifest
-	if err := c.ShouldBindJSON(&in); err != nil || (in.Source != "spotify" && in.Source != "tidal" && in.Source != "manual") || in.SourceID == "" || in.Name == "" {
+	if err := c.ShouldBindJSON(&in); err != nil || (in.Source != "spotify" && in.Source != "tidal" && in.Source != "manual") || strings.TrimSpace(in.SourceID) == "" || strings.TrimSpace(in.Name) == "" || in.Tracks == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid playlist manifest"})
 		return
 	}
@@ -500,95 +601,7 @@ func (m *playlistManager) loop() {
 }
 func TriggerMusicSync() {
 	if musicPlaylists != nil {
+		musicPlaylists.scan.Store(true)
 		musicPlaylists.requestSync()
-	}
-}
-
-func (m *playlistManager) reconcile() {
-	ctx, cancel := context.WithTimeout(m.ctx, 45*time.Second)
-	defer cancel()
-	_ = m.client.refresh(ctx)
-	library, err := m.client.tracks(ctx)
-	if err != nil {
-		return
-	}
-	state := m.store.snapshot()
-	for _, manifest := range state.Manifests {
-		manifestErr := error(nil)
-		if manifest.SourceUnavailable {
-			continue
-		}
-		matched, pending, amb := matchPlaylistTracks(manifest.Tracks, library)
-		key := playlistKey(manifest)
-		pendingOut := make([]PlaylistPending, 0, len(pending))
-		usedPending := make([]bool, len(pending))
-		for i, track := range manifest.Tracks {
-			for j, p := range pending {
-				if !usedPending[j] && normalizePlaylistText(track.Title) == normalizePlaylistText(p.Title) && normalizePlaylistText(track.Artist) == normalizePlaylistText(p.Artist) {
-					pendingOut = append(pendingOut, PlaylistPending{Index: i, Track: track})
-					usedPending[j] = true
-					break
-				}
-			}
-		}
-		st := PlaylistStatus{Source: manifest.Source, SourceID: manifest.SourceID, Name: manifest.Name, Matched: len(matched), Missing: len(pending), Ambiguous: amb, Pending: pendingOut, UpdatedAt: time.Now()}
-		if len(matched) > 0 {
-			id := m.store.snapshot().Owned[key]
-			if id == 0 {
-				id, manifestErr = m.client.createPlaylist(ctx, manifest.Name, matched)
-				if manifestErr == nil {
-					m.store.mu.Lock()
-					m.store.state.Owned[key] = id
-					manifestErr = m.store.saveLocked()
-					if manifestErr != nil {
-						delete(m.store.state.Owned, key)
-					}
-					m.store.mu.Unlock()
-				}
-			}
-			if manifestErr == nil {
-				manifestErr = m.client.reconcilePlaylist(ctx, id, matched)
-			}
-		}
-		if manifestErr != nil {
-			st.Error = manifestErr.Error()
-		}
-		m.store.mu.Lock()
-		m.store.state.Status[key] = st
-		_ = m.store.saveLocked()
-		m.store.mu.Unlock()
-	}
-	// Genre playlists are derived from Plex metadata and use a separate ownership namespace.
-	genres := make(map[string][]PlexTrack)
-	for _, track := range library {
-		for _, genre := range track.Genres {
-			genre = strings.TrimSpace(genre)
-			if genre != "" {
-				genres[genre] = append(genres[genre], track)
-			}
-		}
-	}
-	for genre, tracks := range genres {
-		key := "genre:" + normalizePlaylistText(genre)
-		id := state.Owned[key]
-		var e error
-		if id == 0 {
-			id, e = m.client.createPlaylist(ctx, "Genre — "+genre, tracks)
-			if e == nil {
-				m.store.mu.Lock()
-				m.store.state.Owned[key] = id
-				e = m.store.saveLocked()
-				if e != nil {
-					delete(m.store.state.Owned, key)
-				}
-				m.store.mu.Unlock()
-			}
-		}
-		if e == nil {
-			e = m.client.reconcilePlaylist(ctx, id, tracks)
-		}
-		if e != nil {
-			logMessage(LogLevelWarn, "MusicPlaylists", "genre %s sync failed: %v", genre, e)
-		}
 	}
 }

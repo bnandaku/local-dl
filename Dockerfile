@@ -1,6 +1,6 @@
 FROM golang:latest AS build
 WORKDIR /go/src
-COPY . .
+COPY go.mod go.sum ./
 
 # Install build dependencies for sqlite3
 RUN apt-get update && apt-get install -y \
@@ -12,14 +12,16 @@ RUN apt-get update && apt-get install -y \
 # Enable CGO for sqlite3 support
 ENV CGO_ENABLED=1
 
-RUN go get
+RUN go mod download
+COPY . .
 RUN go build -o app .
 
 FROM ubuntu:latest AS runtime
 
-# Install runtime dependencies
+# Install runtime dependencies (ffprobe reads music tags and validates audio)
 RUN apt-get update && apt-get install -y \
     ca-certificates \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/

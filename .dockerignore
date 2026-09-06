@@ -1,0 +1,9 @@
+.git
+local-plex-dl
+putio-go-server
+__pycache__
+**/__pycache__
+.unlazy
+*.db
+music-queue.json
+music-ingest.json

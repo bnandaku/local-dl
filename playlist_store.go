@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,11 +12,12 @@ import (
 )
 
 type PlaylistTrack struct {
-	Title      string `json:"title"`
-	Artist     string `json:"artist"`
-	Album      string `json:"album"`
-	ISRC       string `json:"isrc,omitempty"`
-	DurationMS int64  `json:"duration_ms,omitempty"`
+	Unavailable bool   `json:"unavailable,omitempty"`
+	Title       string `json:"title"`
+	Artist      string `json:"artist"`
+	Album       string `json:"album"`
+	ISRC        string `json:"isrc,omitempty"`
+	DurationMS  int64  `json:"duration_ms,omitempty"`
 }
 
 type PlaylistManifest struct {
@@ -26,9 +29,12 @@ type PlaylistManifest struct {
 }
 
 type playlistState struct {
-	Manifests []PlaylistManifest        `json:"manifests"`
-	Owned     map[string]int64          `json:"owned_playlists"`
-	Status    map[string]PlaylistStatus `json:"status"`
+	InstanceID string                    `json:"instance_id"`
+	ServerID   string                    `json:"server_id"`
+	LastError  string                    `json:"last_error,omitempty"`
+	Manifests  []PlaylistManifest        `json:"manifests"`
+	Owned      map[string]int64          `json:"owned_playlists"`
+	Status     map[string]PlaylistStatus `json:"status"`
 }
 
 type PlaylistStatus struct {
@@ -61,7 +67,7 @@ func newPlaylistStore(dir string) (*playlistStore, error) {
 	s := &playlistStore{dir: dir, state: playlistState{Owned: map[string]int64{}, Status: map[string]PlaylistStatus{}}}
 	b, err := os.ReadFile(filepath.Join(dir, "playlists.json"))
 	if os.IsNotExist(err) {
-		return s, nil
+		return s, s.ensureIdentity()
 	}
 	if err != nil {
 		return nil, err
@@ -75,7 +81,19 @@ func newPlaylistStore(dir string) (*playlistStore, error) {
 	if s.state.Status == nil {
 		s.state.Status = map[string]PlaylistStatus{}
 	}
-	return s, nil
+	return s, s.ensureIdentity()
+}
+
+func (s *playlistStore) ensureIdentity() error {
+	if s.state.InstanceID != "" {
+		return nil
+	}
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return err
+	}
+	s.state.InstanceID = hex.EncodeToString(id[:])
+	return s.saveLocked()
 }
 
 func (s *playlistStore) saveLocked() error {
@@ -83,11 +101,30 @@ func (s *playlistStore) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	tmp := filepath.Join(s.dir, "playlists.json.tmp")
-	if err := os.WriteFile(tmp, b, 0600); err != nil {
+	f, err := os.CreateTemp(s.dir, ".playlist-state-*")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(s.dir, "playlists.json"))
+	defer os.Remove(f.Name())
+	defer f.Close()
+	if _, err = f.Write(b); err != nil {
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(f.Name(), filepath.Join(s.dir, "playlists.json")); err != nil {
+		return err
+	}
+	dir, err := os.Open(s.dir)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }
 
 func (s *playlistStore) upsert(m PlaylistManifest) error {
@@ -95,12 +132,21 @@ func (s *playlistStore) upsert(m PlaylistManifest) error {
 	defer s.mu.Unlock()
 	for i := range s.state.Manifests {
 		if s.state.Manifests[i].Source == m.Source && s.state.Manifests[i].SourceID == m.SourceID {
+			old := s.state.Manifests[i]
 			s.state.Manifests[i] = m
-			return s.saveLocked()
+			if err := s.saveLocked(); err != nil {
+				s.state.Manifests[i] = old
+				return err
+			}
+			return nil
 		}
 	}
 	s.state.Manifests = append(s.state.Manifests, m)
-	return s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		s.state.Manifests = s.state.Manifests[:len(s.state.Manifests)-1]
+		return err
+	}
+	return nil
 }
 
 func (s *playlistStore) snapshot() playlistState {

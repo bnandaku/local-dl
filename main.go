@@ -57,14 +57,14 @@ const (
 
 // TVShowInfo holds parsed information about a TV show episode
 type TVShowInfo struct {
-	ShowName       string
-	Season         string
-	Episode        string
-	OriginalName   string
-	QualityInfo    string // Everything after the episode number (resolution, codec, etc.)
-	Extension      string
-	HasSeasonInfo  bool
-	StandardName   string // Standardized filename: ShowName.SXXEXX.quality.ext
+	ShowName      string
+	Season        string
+	Episode       string
+	OriginalName  string
+	QualityInfo   string // Everything after the episode number (resolution, codec, etc.)
+	Extension     string
+	HasSeasonInfo bool
+	StandardName  string // Standardized filename: ShowName.SXXEXX.quality.ext
 }
 
 // MovieInfo holds parsed information about a movie
@@ -226,8 +226,8 @@ func buildTVShowPath(basePath string, info TVShowInfo) (string, error) {
 // Also handles: Title (Year) Quality.ext, Title.Year.ext, etc.
 func parseMovieInfo(filename string) MovieInfo {
 	info := MovieInfo{
-		OriginalName:  filename,
-		HasMovieInfo:  false,
+		OriginalName: filename,
+		HasMovieInfo: false,
 	}
 
 	extension := filepath.Ext(filename)
@@ -312,6 +312,9 @@ func main() {
 	}
 	Jobs = make([]*Item, 0)
 	JobMap = make(map[int64]*Item)
+	if err := restoreMusicQueue(); err != nil {
+		logMessage(LogLevelWarn, "Music", "Cannot restore durable music queue: %v", err)
+	}
 
 	logMessage(LogLevelInfo, "Main", "Configuration:")
 	logMessage(LogLevelInfo, "Main", "  Movies Path: %s", MoviesPath)
@@ -347,6 +350,11 @@ func main() {
 	go GetQueue(ctx)
 
 	r := gin.Default()
+	if err := InitMusicPlaylists(ctx, r); err != nil {
+		logMessage(LogLevelError, "MusicPlaylists", "Playlist initialization failed: %v", err)
+		return
+	}
+	InitMusicIngest(ctx)
 	r.GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"message": "pong",
@@ -376,6 +384,10 @@ func (i *Item) StartDownload() error {
 
 	logMessage(LogLevelInfo, "Download", "Starting download for: %s (Type: %s)", i.Name, i.Type)
 	i.Started = true
+
+	if i.Type == Music || isAudioFilename(i.Name) {
+		return i.downloadMusic()
+	}
 
 	// Determine base destination
 	destination := MoviesPath
@@ -513,6 +525,24 @@ func HandleDownload(c *gin.Context) {
 		// fmt.Println(err)
 		return
 	}
+	isMusic := json.Type == Music || isAudioFilename(json.Name)
+	if isMusic {
+		token := os.Getenv("MUSIC_API_TOKEN")
+		if token == "" || c.GetHeader("Authorization") != "Bearer "+token {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "music authorization required"})
+			return
+		}
+		json.Type = Music
+		json.Started, json.Completed, json.InQueue = false, false, false
+		json.CompletedPercent = ""
+		added, err := enqueueMusicJob(&json)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "music queue unavailable"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"message": "Music queued", "already_queued": !added})
+		return
+	}
 
 	strings.ReplaceAll(json.Name, " ", ".")
 
@@ -596,6 +626,8 @@ func Dequeue(ctx context.Context) {
 				JobsMutex.Lock()
 				Jobs = append(Jobs, j)
 				JobsMutex.Unlock()
+			} else if j.Type == Music || isAudioFilename(j.Name) {
+				forgetMusicJob(j)
 			}
 		}(job)
 	}
@@ -705,6 +737,27 @@ func GetQueue(ctx context.Context) {
 		}
 
 		items := response.Items
+		acceptedItems := make([]*Item, 0, len(items))
+		for _, item := range items {
+			if item == nil {
+				continue
+			}
+			if item.Type == Music || isAudioFilename(item.Name) {
+				item.Type = Music
+				added, e := enqueueMusicJob(item)
+				if e != nil {
+					logMessage(LogLevelWarn, "QueuePoller", "Cannot durably queue music %d; leaving unclaimed: %v", item.FileId, e)
+					continue
+				}
+				if added {
+					item.InQueue = true
+					UpdateQueue(item)
+				}
+				continue
+			}
+			acceptedItems = append(acceptedItems, item)
+		}
+		items = acceptedItems
 
 		// Check if catalog resync is requested
 		if response.CatalogStatus.NeedsResync {
@@ -864,6 +917,7 @@ type Item struct {
 	Type             ContentType `json:"type"`
 	Name             string      `json:"name"`
 	FileId           int64       `json:"file_id"`
+	FileSize         int64       `json:"file_size"`
 	Started          bool        `json:"started"`
 	CompletedPercent string      `json:"completed_percent"`
 	Completed        bool        `json:"completed"`
@@ -888,6 +942,7 @@ type CatalogStatus struct {
 type ContentType string
 
 const (
+	Music  ContentType = "music"
 	Movies ContentType = "movie"
 	Anime  ContentType = "anime"
 	TVShow ContentType = "tvshow"

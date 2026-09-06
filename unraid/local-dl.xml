@@ -60,6 +60,13 @@
     /mnt/user/appdata/local-dl
   </Config>
 
+  <Config Name="Music Path" Target="/mnt/music" Default="/mnt/user/media/music" Mode="rw" Description="Music destination; new downloads are organized by genre, album artist and album." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/media/music</Config>
+  <Config Name="PLEX_URL" Target="PLEX_URL" Default="" Mode="" Description="Plex server URL reachable from this container, for example http://192.168.1.10:32400." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="PLEX_TOKEN" Target="PLEX_TOKEN" Default="" Mode="" Description="Plex token for the account that will own managed playlists." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="PLEX_MUSIC_SECTION_ID" Target="PLEX_MUSIC_SECTION_ID" Default="" Mode="" Description="Numeric Plex Music library section ID. Playlist sync is disabled until all Plex settings are present." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="MUSIC_API_TOKEN" Target="MUSIC_API_TOKEN" Default="" Mode="" Description="Secret bearer token protecting playlist import/status/sync endpoints. Leave blank to disable the HTTP endpoints." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="MUSIC_PLAYLIST_DIR" Target="MUSIC_PLAYLIST_DIR" Default="/data/music-playlists" Mode="" Description="Persistent source manifests and managed playlist ownership." Type="Variable" Display="advanced" Required="false" Mask="false">/data/music-playlists</Config>
+
   <!-- Port -->
 
   <Config

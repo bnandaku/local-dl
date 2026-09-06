@@ -28,7 +28,7 @@ python3 scripts/import_playlists.py \
 
 MUSIC_API_TOKEN=... python3 scripts/import_playlists.py \
   --tidal-bridge http://peaches-unraid:8090 --tidal-playlist 123 \
-  --local-dl http://peaches-unraid:PORT
+  --local-dl http://peaches-unraid:8080
 ```
 
 ## Spotify
