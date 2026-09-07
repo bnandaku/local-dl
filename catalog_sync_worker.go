@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -103,7 +104,7 @@ func catalogSyncCycle(ctx context.Context, now time.Time) error {
 	if e != nil {
 		return e
 	}
-	if now.Unix() < s.RetryAt {
+	if s.Blocked || now.Unix() < s.RetryAt {
 		return nil
 	}
 	if len(s.Pending) == 0 {
@@ -127,18 +128,28 @@ func catalogSyncCycle(ctx context.Context, now time.Time) error {
 	if _, e = checkCatalogRoots(true); e != nil {
 		return catalogSyncFailure(s, now, e, false)
 	}
-	auth, e := transmitCatalogSnapshot(ctx, s.Pending)
+	s, e = prepareOrderedCatalog(ctx, s)
 	if e != nil {
+		return catalogSyncFailure(s, now, e, false)
+	}
+	auth, e := transmitCatalogSnapshot(ctx, s.Pending, s)
+	if e != nil {
+		var stale catalogStale
+		if errors.As(e, &stale) {
+			if e = reconcileStaleCatalog(ctx, s); e == nil {
+				return nil
+			}
+		}
 		return catalogSyncFailure(s, now, e, auth)
 	}
-	if s.Uncertain {
+	if s.Uncertain && s.PendingSequence == 0 {
 		return catalogSyncFailure(s, now, catalogDeliveryUncertain{}, false)
 	}
 	catalogMutationMu.Lock()
 	_, e = CatalogDB.Exec(`UPDATE catalog_sync_state SET acknowledged=?,completed_request=MAX(completed_request,?),
  first_dirty=CASE WHEN generation=? THEN 0 ELSE first_dirty END,last_dirty=CASE WHEN generation=? THEN 0 ELSE last_dirty END,
  last_full=CASE WHEN ? THEN ? ELSE last_full END,next_full=CASE WHEN ? THEN ? ELSE next_full END,
- pending=NULL,pending_generation=0,pending_request=0,pending_full=0,retry_at=0,failures=0,last_error='' WHERE id=1`,
+ uncertain=0,pending_sequence=0,pending_hash='',pending=NULL,pending_generation=0,pending_request=0,pending_full=0,retry_at=0,failures=0,last_error='' WHERE id=1`,
 		s.PendingGeneration, s.PendingRequest, s.PendingGeneration, s.PendingGeneration, s.PendingFull, now.Unix(), s.PendingFull, now.Add(24*time.Hour).Unix())
 	catalogMutationMu.Unlock()
 	if e != nil {
@@ -148,8 +159,12 @@ func catalogSyncCycle(ctx context.Context, now time.Time) error {
 	return nil
 }
 func catalogSyncFailure(s catalogSyncState, now time.Time, cause error, auth bool) error {
+	var authentication catalogAuth
+	auth = auth || errors.As(cause, &authentication)
 	var uncertain catalogDeliveryUncertain
-	deliveryUncertain := errors.As(cause, &uncertain)
+	deliveryUncertain := s.PendingSequence == 0 && errors.As(cause, &uncertain)
+	var hold catalogHold
+	blocked := errors.As(cause, &hold)
 	failures := s.Failures + 1
 	delay := 30 * time.Second
 	for i := 1; i < failures && delay < 30*time.Minute; i++ {
@@ -165,22 +180,33 @@ func catalogSyncFailure(s catalogSyncState, now time.Time, cause error, auth boo
 	message := cause.Error()
 	if auth {
 		delay = 30 * time.Minute
-		message = "catalog authentication failed; configure CATALOG_API_KEY or BOT_SERVICE_TOKEN"
+		message = "catalog authentication failed; configure CATALOG_API_KEY (required for ordered sync), or BOT_SERVICE_TOKEN for legacy sync"
 	}
-	_, e := CatalogDB.Exec(`UPDATE catalog_sync_state SET retry_at=?,failures=?,last_error=?,uncertain=MAX(uncertain,?) WHERE id=1`, now.Add(delay).Unix(), failures, message, deliveryUncertain)
+	_, e := CatalogDB.Exec(`UPDATE catalog_sync_state SET retry_at=?,failures=?,last_error=?,uncertain=MAX(uncertain,?),blocked=? WHERE id=1`, now.Add(delay).Unix(), failures, message, deliveryUncertain, blocked)
 	if e != nil {
 		return e
 	}
-	logMessage(LogLevelWarn, "CatalogSync", "Catalog retained; retry in %s: %s", delay.Round(time.Second), message)
+	if blocked {
+		logMessage(LogLevelWarn, "CatalogSync", "Catalog held for operator repair: %s", message)
+	} else {
+		logMessage(LogLevelWarn, "CatalogSync", "Catalog retained; retry in %s: %s", delay.Round(time.Second), message)
+	}
 	return cause
 }
-func transmitCatalogSnapshot(ctx context.Context, payload []byte) (authFailure bool, err error) {
-	key := os.Getenv("CATALOG_API_KEY")
-	if key == "" {
-		key = os.Getenv("BOT_SERVICE_TOKEN")
-	}
+func transmitCatalogSnapshot(ctx context.Context, payload []byte, identity ...catalogSyncState) (authFailure bool, err error) {
+	key := catalogAPIKey()
 	if key == "" {
 		return true, fmt.Errorf("catalog bearer credential unavailable")
+	}
+	var ordered catalogSyncState
+	if len(identity) > 0 {
+		ordered = identity[0]
+	}
+	if ordered.PendingSequence > 0 && os.Getenv("CATALOG_API_KEY") == "" {
+		return true, catalogAuth{}
+	}
+	if len(payload) > 32<<20 {
+		return false, catalogHold{"catalog snapshot exceeds 32 MiB limit"}
 	}
 	var expected CatalogSyncData
 	if e := json.Unmarshal(payload, &expected); e != nil {
@@ -201,7 +227,12 @@ func transmitCatalogSnapshot(ctx context.Context, payload []byte) (authFailure b
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Content-Encoding", "gzip")
 	request.Header.Set("Authorization", "Bearer "+key)
-	client := &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	if ordered.PendingSequence > 0 {
+		request.Header.Set("X-Catalog-Source", ordered.Source)
+		request.Header.Set("X-Catalog-Sequence", strconv.FormatInt(ordered.PendingSequence, 10))
+		request.Header.Set("X-Catalog-SHA256", ordered.PendingHash)
+	}
+	client := catalogHTTPClient()
 	var wrote atomic.Bool
 	request = request.WithContext(httptrace.WithClientTrace(request.Context(), &httptrace.ClientTrace{WroteHeaders: func() { wrote.Store(true) }}))
 	response, e := client.Do(request)
@@ -209,11 +240,29 @@ func transmitCatalogSnapshot(ctx context.Context, payload []byte) (authFailure b
 		if !wrote.Load() {
 			return false, fmt.Errorf("catalog connection failed before request delivery")
 		}
+		if ordered.PendingSequence > 0 {
+			return false, fmt.Errorf("ordered catalog response lost; retry saved snapshot identity")
+		}
 		return false, catalogDeliveryUncertain{}
 	}
 	defer response.Body.Close()
 	if response.StatusCode == 401 || response.StatusCode == 403 {
 		return true, fmt.Errorf("catalog authentication refused")
+	}
+	if ordered.PendingSequence > 0 && (response.StatusCode == 400 || response.StatusCode == 413) {
+		return false, catalogHold{fmt.Sprintf("catalog payload rejected with HTTP %d; repair before requesting reconciliation", response.StatusCode)}
+	}
+	if ordered.PendingSequence > 0 && response.StatusCode == 409 {
+		var result struct {
+			Error string `json:"error"`
+		}
+		if e := decodeCatalogJSON(response, &result); e != nil {
+			return false, e
+		}
+		if result.Error == "stale_catalog_sequence" {
+			return false, catalogStale{}
+		}
+		return false, catalogHold{"catalog identity conflict; preserve snapshot and restore original producer/sequence"}
 	}
 	if response.StatusCode != 200 {
 		return false, fmt.Errorf("catalog API returned HTTP %d", response.StatusCode)
@@ -223,6 +272,10 @@ func transmitCatalogSnapshot(ctx context.Context, payload []byte) (authFailure b
 		return false, fmt.Errorf("catalog API did not return JSON acknowledgement")
 	}
 	var ack struct {
+		Source   string `json:"source_id"`
+		Sequence int64  `json:"sequence"`
+		Hash     string `json:"sha256"`
+		Replayed *bool  `json:"replayed"`
 		Message  string `json:"message"`
 		Shows    *int   `json:"shows"`
 		Episodes *int   `json:"episodes"`
@@ -233,6 +286,9 @@ func transmitCatalogSnapshot(ctx context.Context, payload []byte) (authFailure b
 	}
 	if decoder.Decode(new(interface{})) != io.EOF {
 		return false, fmt.Errorf("catalog acknowledgement has trailing data")
+	}
+	if ordered.PendingSequence > 0 && (ack.Source != ordered.Source || ack.Sequence != ordered.PendingSequence || ack.Hash != ordered.PendingHash || ack.Replayed == nil) {
+		return false, fmt.Errorf("ordered catalog acknowledgement identity missing or mismatched")
 	}
 	return false, nil
 }

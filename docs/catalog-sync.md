@@ -10,7 +10,17 @@ One background worker batches events for 30 seconds, with a 120-second ceiling d
 
 A snapshot is read in one transaction and stored with its captured generation before transmission. Only HTTP 200 JSON with the expected success message and show/episode counts acknowledges it. New mutations and reconciliation requests arriving during upload remain pending. DNS, connection-refused and TLS failures before request delivery remain ordinary retries. Known HTTP failures retry the same captured bytes with jittered exponential backoff, starting at 30 seconds and capped at 30 minutes. Authentication failures pause for 30 minutes with an actionable status message. Routine refreshes are not sent to Discord.
 
-**Legacy endpoint limitation:** an unacknowledged network request may still execute remotely. Without server-side ordering, a duplicate's success cannot prove the earlier handler has settled. Local-dl persists `uncertain_delivery`, retries only the same frozen snapshot, and refuses to advance to newer snapshots. Automatic progress after that condition requires the ordered server contract described in [catalog-sync-bot-followup.md](catalog-sync-bot-followup.md). Do not clear that state merely because a duplicate was acknowledged; no stale request may remain executing when newer data is allowed to advance.
+## Ordered delivery
+
+Set `CATALOG_SOURCE_ID=peaches-unraid` to enroll the dedicated local-dl key with the bot's `ordered_catalog_v1` contract. Local-dl verifies capabilities and reads `/api/v1/catalog/watermark?source_id=...` before assigning an ordered snapshot. It persists the stable source, monotonically increasing sequence, exact JSON bytes and SHA-256 before POST. The sequence is separate from catalog dirty generation and advances for daily reconciliations too. New databases bootstrap above the server watermark; existing pending snapshots retain their original identity across restarts.
+
+The POST carries `X-Catalog-Source`, `X-Catalog-Sequence`, and `X-Catalog-SHA256`. Acknowledgement requires the matching source/sequence/hash, a boolean replay marker, and the existing success message/count checks. Lost responses and transient failures retry identical bytes and headers; a matching replay safely clears uncertainty. Mutations arriving during upload stay dirty.
+
+A stale-sequence response causes a watermark read and schedules a fresh full reconciliation above that watermark, without falsely acknowledging the obsolete generation. Conflicting identities/content, invalid payloads and oversized snapshots set a durable operator hold. Automatic resyncs and restarts do not clear it. After repairing the cause, authenticated `POST /catalog/scan` resumes the saved snapshot and queues reconciliation. Authentication failures retain the 30-minute retry hold.
+
+The source remains persisted even if the environment variable is removed; there is no silent downgrade. Restore the original source and rotate the existing key ID for credential changes. Creating a new key is a different producer and cannot take ownership. Legacy mode remains available only for databases never enrolled locally; its uncertainty fence remains until ordered enrollment receives a verified acknowledgement.
+
+**Rollback:** after the server enrolls, it rejects all legacy unordered writers. A rollback to an older local-dl image preserves media/queue operations but cannot resume catalog synchronization. Restore an ordered-capable image and its durable database for full recovery; do not reset the server watermark or delete the local outbox. Keep pre-deployment SQLite backups and the previous container.
 
 ## Storage safety
 
@@ -32,15 +42,16 @@ An explicitly configured unavailable/unmigrated database prevents quarantine fro
 
 ## Configuration and status
 
-- `CATALOG_API_KEY`: private bearer API key for the bot's catalog endpoint; falls back to the existing `BOT_SERVICE_TOKEN` when unset. Never store real keys in this repository.
+- `CATALOG_SOURCE_ID`: stable ordered producer ID, configured as `peaches-unraid` on Unraid.
+- `CATALOG_API_KEY`: private bearer API key for the bot's catalog endpoint; required for ordered mode. Legacy mode can fall back to the existing `BOT_SERVICE_TOKEN` when unset. Never store real keys in this repository.
 - `REMOTE_SERVER`: existing bot API base URL.
 - `CATALOG_DB`, `MOVIES_PATH`, `TVSHOW_PATH`: existing database and managed roots. SQLite now also stores sync state, root identities and validation proofs. Configure `CATALOG_DB=/data/tvshows_catalog.db` without surrounding whitespace and mount `/data` persistently; recovery/archive state also derives its directory from this setting. Catalog initialization trims accidental surrounding whitespace. Before correcting an old deployment, recover its catalog and recovery/archive state from the old container into the mounted directory; retain backups.
 - `CATALOG_ALLOW_EMPTY_ROOTS`: explicit first-enrollment exception for intentionally empty libraries, as described above.
 
-Authenticated `GET /recovery/status` includes `catalog_sync`: generation/acknowledgement, last/next full reconciliation, retry time, errors and uncertainty flag. Private snapshot bytes and bearer credentials are never returned. Catalog scan/search/stat endpoints require the existing local `BOT_SERVICE_TOKEN` bearer credential. Reconfiguring an outgoing key does not change inbound local service authentication.
+Authenticated `GET /recovery/status` includes `catalog_sync`: generation/acknowledgement, last/next full reconciliation, retry time, errors, uncertainty flag, producer identity, assigned/pending sequences, pending hash and operator hold. Private snapshot bytes and bearer credentials are never returned. Catalog scan/search/stat endpoints require the existing local `BOT_SERVICE_TOKEN` bearer credential. Reconfiguring an outgoing key does not change inbound local service authentication.
 
 ## Verification
 
 Run `go test -race ./...`, `go vet ./...` and `python3 -m unittest discover -s scripts -p 'test_*.py'`. Install native unrar/ffmpeg tools (or use the runtime image) to include all existing media/recovery fixtures. Acceptance tests use actual SQLite, fake time and an HTTP bot to cover idle/daily behavior, transactional dirty state, debounce, moves, restart retries, in-flight mutations, root outages/enrollment, strict acknowledgements, auth holds and unknown-delivery fencing.
 
-Deployment uses a privately configured catalog API key. The legacy ordering limitation remains a bot integration dependency; the local uncertainty fence preserves safety until that contract is available. A server-only change cannot stop the old deployed five-minute local-dl caller.
+Deployment uses a privately configured catalog API key. The ordered integration uses the deployed bot contract to recover safely from ambiguous delivery. A server-only change cannot stop the old deployed five-minute local-dl caller.

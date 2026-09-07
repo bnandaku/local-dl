@@ -8,6 +8,11 @@ import (
 )
 
 type catalogSyncState struct {
+	Source            string `json:"source_id"`
+	Sequence          int64  `json:"sequence"`
+	PendingSequence   int64  `json:"pending_sequence"`
+	PendingHash       string `json:"pending_sha256"`
+	Blocked           bool   `json:"blocked"`
 	Uncertain         bool   `json:"uncertain_delivery"`
 	Generation        int64  `json:"generation"`
 	Acknowledged      int64  `json:"acknowledged"`
@@ -44,7 +49,7 @@ func initCatalogSyncSchema() error {
 	if e != nil {
 		return e
 	}
-	hasUncertain := false
+	columns := map[string]bool{}
 	for rows.Next() {
 		var id, required, primary int
 		var name, kind string
@@ -53,18 +58,18 @@ func initCatalogSyncSchema() error {
 			rows.Close()
 			return e
 		}
-		if name == "uncertain" {
-			hasUncertain = true
-		}
+		columns[name] = true
 	}
 	e = rows.Err()
 	rows.Close()
 	if e != nil {
 		return e
 	}
-	if !hasUncertain {
-		if _, e = CatalogDB.Exec("ALTER TABLE catalog_sync_state ADD COLUMN uncertain INTEGER NOT NULL DEFAULT 0"); e != nil {
-			return e
+	for name, definition := range map[string]string{"uncertain": "INTEGER NOT NULL DEFAULT 0", "source": "TEXT NOT NULL DEFAULT ''", "sequence": "INTEGER NOT NULL DEFAULT 0", "pending_sequence": "INTEGER NOT NULL DEFAULT 0", "pending_hash": "TEXT NOT NULL DEFAULT ''", "blocked": "INTEGER NOT NULL DEFAULT 0"} {
+		if !columns[name] {
+			if _, e = CatalogDB.Exec("ALTER TABLE catalog_sync_state ADD COLUMN " + name + " " + definition); e != nil {
+				return e
+			}
 		}
 	}
 	meaningful := `OLD.file_path IS NOT NEW.file_path OR OLD.filename IS NOT NEW.filename OR OLD.media_type IS NOT NEW.media_type OR OLD.show_name IS NOT NEW.show_name OR OLD.season IS NOT NEW.season OR OLD.episode IS NOT NEW.episode OR OLD.title IS NOT NEW.title OR OLD.year IS NOT NEW.year OR OLD.quality IS NOT NEW.quality OR OLD.file_size IS NOT NEW.file_size OR OLD.modified_at IS NOT NEW.modified_at OR OLD.status IS NOT NEW.status`
@@ -95,10 +100,10 @@ func initCatalogSyncSchema() error {
 	return nil
 }
 
-const catalogStateSelect = `SELECT uncertain,generation,acknowledged,first_dirty,last_dirty,requested,completed_request,last_full,next_full,retry_at,failures,last_error,pending,pending_generation,pending_request,pending_full FROM catalog_sync_state WHERE id=1`
+const catalogStateSelect = `SELECT source,sequence,pending_sequence,pending_hash,blocked,uncertain,generation,acknowledged,first_dirty,last_dirty,requested,completed_request,last_full,next_full,retry_at,failures,last_error,pending,pending_generation,pending_request,pending_full FROM catalog_sync_state WHERE id=1`
 
 func scanCatalogState(row *sql.Row) (s catalogSyncState, e error) {
-	e = row.Scan(&s.Uncertain, &s.Generation, &s.Acknowledged, &s.FirstDirty, &s.LastDirty, &s.Requested, &s.CompletedRequest, &s.LastFull, &s.NextFull, &s.RetryAt, &s.Failures, &s.LastError, &s.Pending, &s.PendingGeneration, &s.PendingRequest, &s.PendingFull)
+	e = row.Scan(&s.Source, &s.Sequence, &s.PendingSequence, &s.PendingHash, &s.Blocked, &s.Uncertain, &s.Generation, &s.Acknowledged, &s.FirstDirty, &s.LastDirty, &s.Requested, &s.CompletedRequest, &s.LastFull, &s.NextFull, &s.RetryAt, &s.Failures, &s.LastError, &s.Pending, &s.PendingGeneration, &s.PendingRequest, &s.PendingFull)
 	return
 }
 func readCatalogSyncState() (catalogSyncState, error) {
@@ -120,4 +125,16 @@ func RequestCatalogReconciliation() error {
 }
 func catalogBatchDue(s catalogSyncState, now time.Time) bool {
 	return s.Generation > s.Acknowledged && (now.Unix() >= s.LastDirty+30 || now.Unix() >= s.FirstDirty+120)
+}
+
+// Only an authenticated manual scan may resume an operator hold. Automatic bot
+// resync requests must not turn permanent rejection into repeated writes.
+func RetryCatalogReconciliation() error {
+	if CatalogDB == nil {
+		return fmt.Errorf("catalog database unavailable")
+	}
+	if _, err := CatalogDB.Exec(`UPDATE catalog_sync_state SET blocked=0,retry_at=0 WHERE id=1`); err != nil {
+		return err
+	}
+	return RequestCatalogReconciliation()
 }

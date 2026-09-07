@@ -1,16 +1,15 @@
-# Bot follow-up: ordering full catalog replacements
+# Catalog ordering handoff completed
 
-The existing `POST /catalogUpdate` contract replaces the whole catalog without a generation check. A timed-out request can still commit after a retry and a subsequent newer snapshot. Client-side serialization cannot establish the ordering of an unacknowledged server handler.
+The bot supplied `ordered_catalog_v1` on the existing `/catalogUpdate` endpoint, and local-dl now implements the contract. The implementation remains entirely in local-dl; this session does not modify or deploy the bot.
 
-Please implement durable ordering on the existing endpoint; no delta endpoint is needed. Proposed contract for the bot session to confirm:
+- Source: `peaches-unraid`, persisted locally and bound on the bot to the dedicated integration key's stable ID.
+- Headers: `X-Catalog-Source`, `X-Catalog-Sequence`, `X-Catalog-SHA256` (exact uncompressed JSON bytes).
+- Bootstrap: authenticated `GET /api/v1/catalog/watermark?source_id=peaches-unraid`, allocating above both local sequence and server watermark.
+- Retry: identical persisted payload and identity across timeouts, HTTP failures and restarts. Matching ordered acknowledgements release the old uncertainty fence.
+- Stale sequence: reconcile watermark and schedule a new full scan; never claim obsolete data was acknowledged.
+- Conflicting content/producer or invalid/oversized requests: durable operator hold. Authenticated manual scan can retry after repair; automatic resync cannot clear the hold.
+- Key rotation must retain the existing key ID. A new source/key cannot silently replace the producer. Removing local configuration cannot downgrade a persisted ordered producer.
 
-- Scope one catalog producer to a stable source ID and authenticated principal. Persist a monotonically increasing snapshot sequence and SHA-256 for the accepted full snapshot.
-- Carry source ID, sequence and SHA-256 of the uncompressed request bytes in headers (please document final names). Each captured local snapshot gets one sequence; retries send identical bytes and headers. Sequence is distinct from the local dirty generation because daily reconciliations also need ordering.
-- Atomically compare sequence and commit the replacement catalog plus accepted sequence/hash in the same database transaction. Lower sequences must never replace newer data. Equal sequence plus matching hash is an idempotent success; equal sequence with different content is a conflict.
-- Return source/sequence/hash in the verified JSON acknowledgement. Document stale/conflict errors. Advertise ordered catalog support in authenticated capabilities.
-- Provide the current accepted sequence/hash through an authenticated read so a restarted/new local DB can initialize its next sequence above the server watermark. Reject competing/unauthorized producers. Do not allow legacy unordered requests to bypass fencing once ordered sync is enrolled.
-- Tests: delay request N, accept retry N, accept N+1, then release the delayed N; N+1 must remain authoritative. Cover crash between replacement and watermark, identical replay, conflicting replay, new-client DB bootstrap and key rotation/source identity.
+Regression tests cover lost response and restart replay, identity validation, source persistence, sequence advancement, watermark bootstrap/stale recovery, capability/auth gates, conflict holds, legacy outbox migration and uncertainty promotion. Existing transactional mutation, daily reconciliation and in-flight mutation tests remain in place.
 
-Until that contract is deployed and verified, local-dl fences newer snapshots after an unknown transport outcome. It retains/retries only the captured snapshot, even if a later duplicate receives HTTP 200. This is safe but cannot provide automatic forward progress after uncertainty; do not claim the legacy endpoint can guarantee ordering.
-
-The rest of event-driven scheduling, durable dirty generations, daily reconciliation, root-outage checks, strict bearer/JSON validation and serialized retries is implemented locally. The bearer key is configured privately; no token belongs in the handoff.
+See [catalog-sync.md](catalog-sync.md) for configuration, status and rollback behavior. No additional bot API changes are required for this integration.

@@ -32,7 +32,7 @@ func CatalogScan(c *gin.Context) {
 		return
 	}
 
-	if err := RequestCatalogReconciliation(); err != nil {
+	if err := RetryCatalogReconciliation(); err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Cannot persist catalog reconciliation"})
 		return
 	}
