@@ -36,7 +36,11 @@ func isAudioFilename(name string) bool {
 func readMusicMetadata(path string) (MusicMetadata, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-protocol_whitelist", "file", "-show_entries", "format_tags:stream=codec_type:stream_tags:stream_disposition=attached_pic", "-of", "json", path)
+	tool, err := findMediaTool("ffprobe")
+	if err != nil {
+		return MusicMetadata{}, err
+	}
+	cmd := exec.CommandContext(ctx, tool, "-v", "error", "-protocol_whitelist", "file", "-show_entries", "format_tags:stream=codec_type:stream_tags:stream_disposition=attached_pic", "-of", "json", path)
 	output := &limitedMusicOutput{max: 1024 * 1024}
 	probeErrors := &limitedMusicOutput{max: 65536}
 	cmd.Stderr = probeErrors

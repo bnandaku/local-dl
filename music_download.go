@@ -253,6 +253,7 @@ func musicMkdirAll(path string) error {
 	if err != nil {
 		return err
 	}
+	abs = nativeStoragePath(abs)
 	current := string(filepath.Separator)
 	for _, part := range strings.Split(strings.TrimPrefix(abs, string(filepath.Separator)), string(filepath.Separator)) {
 		if part == "" {

@@ -50,13 +50,16 @@ var errArchiveLimit = errors.New("archive limit exceeded")
 
 // Only unrar's documented CLI is supported. 7z has a different listing grammar.
 func findArchiveTool() (string, error) {
-	name := archiveTool
-	if name == "" {
-		name = "unrar"
+	if archiveTool != "" {
+		p, e := exec.LookPath(archiveTool)
+		if e != nil {
+			return "", archiveFailure(archiveOperational, "tool", e)
+		}
+		return p, nil
 	}
-	p, e := exec.LookPath(name)
+	p, e := findMediaTool("unrar")
 	if e != nil {
-		return "", archiveFailure(archiveOperational, "tool", errors.New("unrar is unavailable"))
+		return "", archiveFailure(archiveOperational, "tool", e)
 	}
 	return p, nil
 }
@@ -390,7 +393,7 @@ func safeArchiveDestination(path string) error {
 	if !filepath.IsAbs(path) {
 		return errors.New("destination must be absolute")
 	}
-	for p := filepath.Clean(path); ; p = filepath.Dir(p) {
+	for p := nativeStoragePath(path); ; p = filepath.Dir(p) {
 		st, e := os.Lstat(p)
 		if e != nil {
 			return e
