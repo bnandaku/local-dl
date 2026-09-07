@@ -563,3 +563,19 @@ func TestCatalogMigratesUncertainColumn(t *testing.T) {
 		}
 	}
 }
+
+func TestCatalogTrimsConfiguredDatabasePath(t *testing.T) {
+	setupCatalogTest(t)
+	path := CatalogPath
+	CatalogDB.Close()
+	CatalogPath = " \t" + path + " \n"
+	if err := InitCatalog(); err != nil {
+		t.Fatal(err)
+	}
+	if CatalogPath != path {
+		t.Fatal("catalog path whitespace was retained")
+	}
+	if _, err := readCatalogSyncState(); err != nil {
+		t.Fatal(err)
+	}
+}

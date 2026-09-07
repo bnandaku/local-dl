@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -36,6 +37,7 @@ type FileEntry struct {
 
 // InitCatalog initializes the catalog database
 func InitCatalog() error {
+	CatalogPath = strings.TrimSpace(CatalogPath)
 	if CatalogPath == "" {
 		CatalogPath = "./tvshows_catalog.db"
 	}

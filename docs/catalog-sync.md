@@ -34,7 +34,7 @@ An explicitly configured unavailable/unmigrated database prevents quarantine fro
 
 - `CATALOG_API_KEY`: private bearer API key for the bot's catalog endpoint; falls back to the existing `BOT_SERVICE_TOKEN` when unset. Never store real keys in this repository.
 - `REMOTE_SERVER`: existing bot API base URL.
-- `CATALOG_DB`, `MOVIES_PATH`, `TVSHOW_PATH`: existing database and managed roots. SQLite now also stores sync state, root identities and validation proofs.
+- `CATALOG_DB`, `MOVIES_PATH`, `TVSHOW_PATH`: existing database and managed roots. SQLite now also stores sync state, root identities and validation proofs. Configure `CATALOG_DB=/data/tvshows_catalog.db` without surrounding whitespace and mount `/data` persistently; recovery/archive state also derives its directory from this setting. Catalog initialization trims accidental surrounding whitespace. Before correcting an old deployment, recover its catalog and recovery/archive state from the old container into the mounted directory; retain backups.
 - `CATALOG_ALLOW_EMPTY_ROOTS`: explicit first-enrollment exception for intentionally empty libraries, as described above.
 
 Authenticated `GET /recovery/status` includes `catalog_sync`: generation/acknowledgement, last/next full reconciliation, retry time, errors and uncertainty flag. Private snapshot bytes and bearer credentials are never returned. Catalog scan/search/stat endpoints require the existing local `BOT_SERVICE_TOKEN` bearer credential. Reconfiguring an outgoing key does not change inbound local service authentication.
