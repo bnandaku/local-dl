@@ -19,7 +19,8 @@ The contract reference is `../putio-go-server/docs/api/bot-api-specs-and-example
 
 **RAR extraction is not wired into local-dl's download queue yet.** The updated bot spec now includes `archive_sets_v1` and archive output receipts, and the live bot advertises archive sets and completed-transfer callbacks. The earlier complete-volume and public-callback contract gaps are addressed in that API revision; local archive orchestration still needs implementation and an end-to-end test.
 
-The live bot now returns authenticated JSON recovery contract 2. At the latest check on 2026-09-06, it did not yet advertise `video_codec_policy` or `video_excluded_codecs`, although those exist in the bot source. Codec-rejected candidates therefore remain held locally until deployment of matching search exclusions. See [video-validation.md](video-validation.md) for the local policy and recovery behavior.
+The live bot now returns authenticated JSON recovery contract 2 and advertises `video_codec_policy` with `video_excluded_codecs: ["dolby_vision"]`. This matches local-dl's default. Local-dl `277e3ff` is deployed on Unraid; the recovery monitor completed without errors and codec-policy recovery is enabled. See [video-validation.md](video-validation.md) for validation scope and configuration.
+
 
 The historical quarantine review is private under ignored `reports/`. Do not bootstrap acquisitions from preliminary inventory counts: use canonical identity, primary media evidence and valid on-disk files; retain ambiguous entries for identification. No source URL should be invented for legacy items.
 
