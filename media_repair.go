@@ -102,6 +102,10 @@ func repairLibraryFile(source string) error {
 	if e = syncMusicDirectory(filepath.Dir(source)); e != nil {
 		return e
 	}
+
+	if e := UpdateCatalogAfterMove(source, target); e != nil {
+		return e
+	}
 	fmt.Println(string(data))
 	return nil
 }

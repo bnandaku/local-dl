@@ -34,5 +34,10 @@ func recoveryStatus(c *gin.Context) {
 	if archiveErr != nil {
 		archiveError = "Archive state unreadable; preserved for repair"
 	}
-	c.JSON(200, gin.H{"archives": archives, "archive_error": archiveError, "monitor": state, "pending_file_feedback": feedback, "unidentified_action": "Identify the title and media type, check the library, then create a legacy recovery request. No source URL is inferred."})
+	catalog, catalogErr := readCatalogSyncState()
+	catalogError := ""
+	if catalogErr != nil {
+		catalogError = "catalog state unavailable"
+	}
+	c.JSON(200, gin.H{"catalog_sync": catalog, "catalog_sync_error": catalogError, "archives": archives, "archive_error": archiveError, "monitor": state, "pending_file_feedback": feedback, "unidentified_action": "Identify the title and media type, check the library, then create a legacy recovery request. No source URL is inferred."})
 }

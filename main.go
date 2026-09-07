@@ -308,6 +308,10 @@ func configureLibraryPaths() {
 func main() {
 	configureLibraryPaths()
 	if len(os.Args) == 3 && os.Args[1] == "repair-file" {
+		if err := InitCatalog(); err != nil {
+			log.Fatal(err)
+		}
+		defer CatalogDB.Close()
 		if err := repairLibraryFile(os.Args[2]); err != nil {
 			log.Fatal(err)
 		}
@@ -338,18 +342,7 @@ func main() {
 		logMessage(LogLevelError, "Main", "Failed to initialize catalog: %v", err)
 	} else {
 		logMessage(LogLevelInfo, "Main", "Catalog database initialized")
-		// Run initial scan in background
-		go func() {
-			time.Sleep(5 * time.Second) // Wait for startup
-			logMessage(LogLevelInfo, "Main", "Running initial catalog scan...")
-			if err := ScanAndUpdateCatalog(); err != nil {
-				logMessage(LogLevelError, "Main", "Initial catalog scan failed: %v", err)
-			} else {
-				logMessage(LogLevelInfo, "Main", "Initial catalog scan completed")
-			}
-			// Mark initial scan as complete and send catalog update
-			FinishInitialScan()
-		}()
+
 	}
 
 	// Create context for graceful shutdown
@@ -359,6 +352,7 @@ func main() {
 	logMessage(LogLevelInfo, "Main", "Starting background workers...")
 	go Dequeue(ctx)
 	go GetQueue(ctx)
+	go runCatalogSync(ctx)
 
 	r := gin.Default()
 	if err := InitMusicPlaylists(ctx, r); err != nil {
@@ -374,9 +368,9 @@ func main() {
 	r.POST("/download", HandleDownload)
 	r.GET("/queue", Queue)
 	r.GET("/recovery/status", recoveryStatus)
-	r.GET("/catalog/stats", CatalogStats)
-	r.POST("/catalog/scan", CatalogScan)
-	r.GET("/catalog/search", CatalogSearch)
+	r.GET("/catalog/stats", requireCatalogServiceAuth, CatalogStats)
+	r.POST("/catalog/scan", requireCatalogServiceAuth, CatalogScan)
+	r.GET("/catalog/search", requireCatalogServiceAuth, CatalogSearch)
 
 	logMessage(LogLevelInfo, "Main", "HTTP server listening on port %s", PORT)
 	logMessage(LogLevelInfo, "Main", "Endpoints: GET /ping, POST /download, GET /queue, GET /catalog/stats, POST /catalog/scan, GET /catalog/search")
@@ -692,29 +686,13 @@ func GetQueue(ctx context.Context) {
 			UpdateQueue(item)
 		}
 
-		// Check if catalog resync is requested
-		if response.CatalogStatus.NeedsResync {
-			logMessage(LogLevelInfo, "CatalogSync", "Resync requested by server: %s", response.CatalogStatus.ResyncReason)
-			go func() {
-				if err := SendCatalogUpdate(); err != nil {
-					logMessage(LogLevelWarn, "CatalogSync", "Failed to send catalog update: %v", err)
-				} else {
-					logMessage(LogLevelInfo, "CatalogSync", "Catalog resync completed successfully")
-				}
-			}()
+		if response.CatalogStatus.NeedsResync && CatalogDB != nil {
+			if err := RequestCatalogReconciliation(); err != nil {
+				logMessage(LogLevelWarn, "CatalogSync", "Cannot persist server resync request")
+			}
 		}
-
-		// Reset backoff on success
+		// Queue polling cadence is independent of catalog synchronization.
 		retryDelay = initialBackoff
-
-		// Send catalog update (every 5 minutes with queue poll)
-		if CatalogDB != nil {
-			go func() {
-				if err := SendCatalogUpdate(); err != nil {
-					logMessage(LogLevelWarn, "CatalogSync", "Failed to send catalog update: %v", err)
-				}
-			}()
-		}
 
 		// Wait for next poll or context cancellation
 		select {

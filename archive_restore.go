@@ -156,6 +156,10 @@ func restoreArchivePublications(ctx context.Context, a archiveSet, s *archiveWor
 		}
 		if p.receipt.LibraryType == "music" {
 			TriggerMusicSync()
+		} else if CatalogDB != nil {
+			if e := AddPublishedFileToCatalog(target); e != nil {
+				return e
+			}
 		}
 	}
 	return verifyArchivePublications(a, j)

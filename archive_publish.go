@@ -149,7 +149,7 @@ func publishArchivePrimary(p preparedArchiveOutput) (archiveReceipt, error) {
 	if p.Item.Type == Music {
 		TriggerMusicSync()
 	} else if CatalogDB != nil {
-		if e := AddFileToCatalog(target); e != nil {
+		if e := AddPublishedFileToCatalog(target); e != nil {
 			logMessage(LogLevelWarn, "Archive", "Published video catalog update will retry on next scan")
 		}
 	}

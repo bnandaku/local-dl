@@ -1,8 +1,10 @@
 package main
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/gin-gonic/gin"
 )
@@ -30,14 +32,11 @@ func CatalogScan(c *gin.Context) {
 		return
 	}
 
-	go func() {
-		logMessage(LogLevelInfo, "API", "Manual catalog scan triggered")
-		if err := ScanAndUpdateCatalog(); err != nil {
-			logMessage(LogLevelError, "API", "Catalog scan failed: %v", err)
-		}
-	}()
-
-	c.JSON(http.StatusOK, gin.H{"message": "Catalog scan started"})
+	if err := RequestCatalogReconciliation(); err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Cannot persist catalog reconciliation"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Catalog reconciliation queued"})
 }
 
 // CatalogSearch searches the catalog
@@ -97,15 +96,15 @@ func CatalogSearch(c *gin.Context) {
 		}
 
 		results = append(results, gin.H{
-			"file_path":   filePath,
-			"filename":    filename,
-			"show_name":   showNameResult,
-			"season":      seasonResult,
-			"episode":     episodeResult,
-			"file_size":   fileSize,
+			"file_path":    filePath,
+			"filename":     filename,
+			"show_name":    showNameResult,
+			"season":       seasonResult,
+			"episode":      episodeResult,
+			"file_size":    fileSize,
 			"file_size_mb": fmt.Sprintf("%.2f", float64(fileSize)/(1024*1024)),
-			"modified_at": modifiedAt,
-			"status":      statusResult,
+			"modified_at":  modifiedAt,
+			"status":       statusResult,
 		})
 	}
 
@@ -113,4 +112,13 @@ func CatalogSearch(c *gin.Context) {
 		"count":   len(results),
 		"results": results,
 	})
+}
+
+func requireCatalogServiceAuth(c *gin.Context) {
+	token := os.Getenv("BOT_SERVICE_TOKEN")
+	if token == "" || subtle.ConstantTimeCompare([]byte(c.GetHeader("Authorization")), []byte("Bearer "+token)) != 1 {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "service authorization required"})
+		return
+	}
+	c.Next()
 }

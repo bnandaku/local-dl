@@ -240,7 +240,7 @@ func (i *Item) downloadMedia() error {
 	scheduleMusicAckRetry()
 	if mediaKind(i.Name) == "video" {
 		update(filepath.Base(target))
-		if err := AddFileToCatalog(target); err != nil {
+		if err := AddPublishedFileToCatalog(target); err != nil {
 			logMessage(LogLevelWarn, "Catalog", "Cannot catalog media: %v", err)
 		}
 	}

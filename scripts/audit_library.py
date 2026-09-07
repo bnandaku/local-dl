@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from catalog_notify import catalog_database, notify_quarantine
 
 AUDIO = {"mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "aif", "aiff", "alac", "wma"}
 VIDEO = {"mkv", "mp4", "m4v", "avi", "mov", "wmv", "mpg", "mpeg", "ts", "m2ts", "mts", "webm", "vob", "ogv", "3gp"}
@@ -171,10 +172,11 @@ def _quarantine_one(source, destination, original):
     return None
 
 
-def audit_library(root, apply=False, report=None, probe=False):
+def audit_library(root, apply=False, report=None, probe=False, catalog_db=None):
     root = Path(root).absolute()
     if not root.is_dir():
         raise ValueError("root must be a directory")
+    database = catalog_database(root, catalog_db) if apply else None
     records = []
     counts = {"files": 0, "recognized": 0, "garbage": 0, "misplaced": 0,
               "quarantined": 0, "errors": 0, "skipped_symlinks": 0, "skipped_staging": 0,
@@ -276,6 +278,8 @@ def audit_library(root, apply=False, report=None, probe=False):
                                 counts["quarantined"] += 1
                                 journal[-1]["status"] = "moved"
                                 rec["status"] = "moved"
+                                persist_journal()
+                                notify_quarantine(database, root, rec)
                             else:
                                 counts["errors"] += 1
                                 rec["error"] = error
@@ -325,6 +329,8 @@ def audit_library(root, apply=False, report=None, probe=False):
                             counts["quarantined"] += 1
                             journal[-1]["status"] = "moved"
                             rec["status"] = "moved"
+                            persist_journal()
+                            notify_quarantine(database, root, rec)
                         else:
                             counts["errors"] += 1
                             rec["error"] = error
@@ -357,12 +363,23 @@ def audit_library(root, apply=False, report=None, probe=False):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, help="media root containing movies, tv, and music")
+    parser.add_argument("--catalog-db", help="local-dl catalog DB for durable quarantine notifications; defaults to CATALOG_DB or ROOT/data/tvshows_catalog.db")
+    parser.add_argument("--replay-quarantine", help="replay catalog notifications from a saved quarantine manifest, without moving files")
     parser.add_argument("--report", help="write JSON report to this path")
     parser.add_argument("--apply", action="store_true", help="move garbage to quarantine")
     parser.add_argument("--probe", action="store_true", help="validate audio/video streams with ffprobe")
     args = parser.parse_args(argv)
     try:
-        result = audit_library(args.root, apply=args.apply, report=args.report, probe=args.probe)
+        if args.replay_quarantine:
+            database = catalog_database(args.root, args.catalog_db)
+            if database is None:
+                raise ValueError("--catalog-db is required to replay catalog notifications")
+            records = json.loads(Path(args.replay_quarantine).read_text())
+            for record in records:
+                notify_quarantine(database, args.root, record)
+            result = {"catalog_notifications_replayed": len(records)}
+        else:
+            result = audit_library(args.root, apply=args.apply, report=args.report, probe=args.probe, catalog_db=args.catalog_db)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
     print(json.dumps(result, indent=2))
