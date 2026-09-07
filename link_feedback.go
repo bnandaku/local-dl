@@ -30,6 +30,7 @@ type linkFeedback struct {
 	FileID int64  `json:"file_id"`
 	Status string `json:"status"`
 	Reason string `json:"reason,omitempty"`
+	Codec  string `json:"codec,omitempty"`
 }
 
 var linkFeedbackMu sync.Mutex
@@ -82,10 +83,10 @@ func saveLinkFeedback(m map[string]linkFeedback) error {
 	return e
 }
 func queueLinkFeedback(i *Item, status, reason string) error {
-	if os.Getenv("BOT_SERVICE_TOKEN") == "" {
-		return nil
-	}
-	if i.FileId <= 0 {
+	return persistFileFeedback(linkFeedback{FileID: i.FileId, Status: status, Reason: reason})
+}
+func persistFileFeedback(f linkFeedback) error {
+	if os.Getenv("BOT_SERVICE_TOKEN") == "" || f.FileID <= 0 {
 		return nil
 	}
 	linkFeedbackMu.Lock()
@@ -94,13 +95,14 @@ func queueLinkFeedback(i *Item, status, reason string) error {
 	if e != nil {
 		return e
 	}
-	key := strconv.FormatInt(i.FileId, 10)
+	key := strconv.FormatInt(f.FileID, 10)
 	if old, ok := m[key]; ok && old.Status == "bad" {
 		return nil
 	}
-	m[key] = linkFeedback{i.FileId, status, reason}
+	m[key] = f
 	return saveLinkFeedback(m)
 }
+
 func botLinkCall(method, path string, body interface{}, out interface{}) (int, error) {
 	b, e := json.Marshal(body)
 	if e != nil {
@@ -154,6 +156,11 @@ func retryLinkFeedback() {
 		return
 	}
 	for key, f := range pending {
+		if f.Codec != "" {
+			if e := requireBotCodecExclusion(f.Codec); e != nil {
+				continue
+			}
+		}
 		if f.Status == "validated" {
 			// Successful publication receipts drive validation, scoped cleanup and confirmation.
 			record, ok := musicReceiptFor(&Item{FileId: f.FileID})
@@ -202,6 +209,10 @@ func deleteFeedback(key string, f linkFeedback) {
 func reportBadMedia(i *Item, err error) bool {
 	if os.Getenv("BOT_SERVICE_TOKEN") == "" {
 		return false
+	}
+	if codec, ok := codecRejection(err); ok {
+		// The copy violates this installation's content policy; it is not labeled corrupt.
+		return persistFileFeedback(linkFeedback{FileID: i.FileId, Status: "bad", Reason: "wrong_content", Codec: codec}) == nil
 	}
 	var failed failedDownloadError
 	if errors.As(err, &failed) {

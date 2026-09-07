@@ -15,18 +15,11 @@ The contract reference is `../putio-go-server/docs/api/bot-api-specs-and-example
 - Skip/discard explicit unwanted supporting leaves through the bot, retaining recognized media and RAR volumes. The bot records removal events for Discord delivery.
 - Provide a RAR extractor with complete-set naming validation, isolated declared volumes, all-volume listing, integrity testing, private extraction, path/link/special-file rejection, bounded expansion and typed intrinsic/operational failures.
 
-## Still blocked on the bot contract
+## Remaining integration work
 
-**RAR extraction is not wired into the download queue yet.** The bot currently excludes archives and does not supply the complete volume manifest or an extracted-file publication contract. Do not claim automatic multipart RAR recovery is available.
+**RAR extraction is not wired into local-dl's download queue yet.** The updated bot spec now includes `archive_sets_v1` and archive output receipts, and the live bot advertises archive sets and completed-transfer callbacks. The earlier complete-volume and public-callback contract gaps are addressed in that API revision; local archive orchestration still needs implementation and an end-to-end test.
 
-The bot session needs to define and implement:
-
-1. Queue a complete archive volume set with stable attempt and archive-set IDs; each volume needs a file ID, filename, exact size and URL. Define when the set is complete, including a torrent whose root itself is an archive.
-2. Treat the archive set as required primary input, not optional garbage. Define extracted-media identity and publication receipts when output files have no Put.io file IDs. Specify required output validation and safe library routing before successful set cleanup.
-3. Provide scoped, idempotent cleanup for every volume after the required extracted outputs are published. Define bad-archive reporting (corrupt, missing volumes in an authoritative complete set, password locked, unsafe entries, no media) and replacement transitions. Missing local tools, transport failures, disk exhaustion and timeouts remain operational holds.
-4. Advertise this support through capabilities and document request/response bodies and errors. Test direct archives, modern and legacy multipart sets, bad sets, restart/replay and one failed output among multiple extracted media files.
-5. Verify actual Put.io transfer completion before accepting public `/dl` callbacks; reject an active/downloading transfer even when transfer/file IDs match.
-6. Deploy the advertised API with the same `BOT_SERVICE_TOKEN` as local-dl. The live capabilities check on 2026-09-06 still returned HTTP 200 text/plain, so end-to-end recovery has not been validated or enabled on that deployment.
+The live bot now returns authenticated JSON recovery contract 2. At the latest check on 2026-09-06, it did not yet advertise `video_codec_policy` or `video_excluded_codecs`, although those exist in the bot source. Codec-rejected candidates therefore remain held locally until deployment of matching search exclusions. See [video-validation.md](video-validation.md) for the local policy and recovery behavior.
 
 The historical quarantine review is private under ignored `reports/`. Do not bootstrap acquisitions from preliminary inventory counts: use canonical identity, primary media evidence and valid on-disk files; retain ambiguous entries for identification. No source URL should be invented for legacy items.
 
@@ -34,4 +27,4 @@ The historical quarantine review is private under ignored `reports/`. Do not boo
 
 Run `go test -race ./...` and `go vet ./...`. Install `unrar`, or set `UNRAR_TEST_TOOL` to its executable, to exercise the permanent synthetic fixtures in `testdata/rar/`. Fixture payloads intentionally are not valid media; these tests prove extraction byte accuracy, not the later media-validation step. The legacy-named fixture contains RAR5 data with `.rar/.r00` naming; it proves naming behavior, not RAR4 encoding compatibility.
 
-Local-dl deployment and the automatic archive recovery claim remain pending the bot changes and a successful live integration check.
+Automatic archive recovery remains pending local queue integration and a successful live integration check. Codec replacement also requires the advertised matching bot search policy.

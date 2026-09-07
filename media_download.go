@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -107,39 +106,6 @@ func mediaDestination(i *Item) (string, error) {
 		name = strings.TrimSuffix(filepath.Base(p.Path), filepath.Ext(p.Path)) + suffix
 	}
 	return filepath.Join(dir, name), nil
-}
-
-func probeVideo(path string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-protocol_whitelist", "file", "-show_entries", "stream=codec_type:stream_disposition=attached_pic", "-of", "json", path)
-	out := &limitedMusicOutput{max: 1 << 20}
-	probeErrors := &limitedMusicOutput{max: 65536}
-	cmd.Stderr = probeErrors
-	cmd.Stdout = out
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() == nil && invalidProbeInput(string(probeErrors.data)) {
-			return badMediaError{"invalid_media"}
-		}
-		return fmt.Errorf("video validation failed")
-	}
-	var p struct {
-		Streams []struct {
-			Type        string `json:"codec_type"`
-			Disposition struct {
-				Attached int `json:"attached_pic"`
-			} `json:"disposition"`
-		} `json:"streams"`
-	}
-	if err := json.Unmarshal(out.data, &p); err != nil {
-		return err
-	}
-	for _, s := range p.Streams {
-		if s.Type == "video" && s.Disposition.Attached == 0 {
-			return nil
-		}
-	}
-	return badMediaError{"no_media"}
 }
 
 // Publish only complete, validated downloads; never truncate an existing movie
