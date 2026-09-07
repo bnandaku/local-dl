@@ -130,7 +130,11 @@ func probeVideo(path string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-protocol_whitelist", "file", "-show_streams", "-show_format", "-of", "json", path)
+	tool, e := findMediaTool("ffprobe")
+	if e != nil {
+		return e
+	}
+	cmd := exec.CommandContext(ctx, tool, "-v", "error", "-protocol_whitelist", "file", "-show_streams", "-show_format", "-of", "json", path)
 	out := &limitedMusicOutput{max: 1 << 20}
 	diagnostic := &limitedMusicOutput{max: 65536}
 	cmd.Stdout, cmd.Stderr = out, diagnostic
@@ -171,7 +175,11 @@ func decodeVideoSample(ctx context.Context, path string, video videoStream, audi
 		args = append(args, "-map", fmt.Sprintf("0:%d", audio.Index))
 	}
 	args = append(args, "-sn", "-dn", "-threads", "2", "-progress", "pipe:1", "-nostats", "-f", "null", "-")
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	tool, e := findMediaTool("ffmpeg")
+	if e != nil {
+		return e
+	}
+	cmd := exec.CommandContext(ctx, tool, args...)
 	output := &limitedMusicOutput{max: 65536}
 	diagnostic := &limitedMusicOutput{max: 65536}
 	cmd.Stdout, cmd.Stderr = output, diagnostic

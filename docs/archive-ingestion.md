@@ -28,3 +28,11 @@ Authenticated `GET /recovery/status` exposes `archives.jobs`, per-job receipts/e
 ## Verification
 
 Run `UNRAR_TEST_TOOL=/path/to/unrar go test -race ./...` with ffprobe and ffmpeg on PATH, followed by `go vet ./...`. The permanent synthetic media fixtures exercise good music/movie sets, retained supports, garbage exclusion, missing/corrupt/password volumes, network holds, restart after partial cleanup, canonical library checks and restoration before cleanup. Without unrar, real extractor tests explicitly skip; do not interpret that as runtime verification.
+
+## Native macOS
+
+The application detects `darwin` at runtime. Extraction, validation, recovery and publication use the same checked pipeline as Linux. It resolves UnRAR, ffprobe and ffmpeg from PATH, then checks the local-dl user tool directory, Apple Silicon Homebrew (`/opt/homebrew/bin`) and Intel Homebrew (`/usr/local/bin`). Set `UNRAR_PATH`, `FFPROBE_PATH` or `FFMPEG_PATH` to override a tool explicitly; an invalid override holds the job instead of silently choosing another executable.
+
+Run `sh scripts/setup-macos-media.sh` on the Mac to compile the pinned, SHA-256-checked [RARLAB UnRAR source](https://www.rarlab.com/rar_add.htm) with Xcode Command Line Tools. It installs the native executable and license under `~/.local/share/local-dl/bin`, requires no sudo, and checks for ffmpeg/ffprobe. Install missing media tools using `brew install ffmpeg`. Homebrew's `rar` cask was disabled on September 1, 2026, so this setup builds from source and does not change Gatekeeper settings.
+
+macOS's standard `/tmp`, `/var` and `/etc` aliases are accepted only when they point to their exact `/private` counterparts. Other symlinks in library or staging paths remain rejected. Configure writable roots with `MUSIC_PATH`, `MOVIES_PATH` and `TVSHOW_PATH` (for example under `/Volumes`) and a persistent `CATALOG_DB`/archive state directory; Linux `/mnt` defaults are not Mac library locations. Movie/TV settings apply to both normal startup and `repair-file`; unset values preserve `/mnt/movies` and `/mnt/tvshows` for existing containers. Mount the media volume before running the importer. The setup script installs tools only; it does not start another production worker.

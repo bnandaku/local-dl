@@ -39,7 +39,9 @@ func setupArchivePipeline(t *testing.T, fixture string) (*archiveTestBot, *archi
 	t.Setenv("MUSIC_PATH", filepath.Join(root, "Music"))
 	t.Setenv("BOT_SERVICE_TOKEN", "test")
 	oldMovies, oldTV := MoviesPath, TVShowPath
-	MoviesPath, TVShowPath = filepath.Join(root, "Movies"), filepath.Join(root, "TV")
+	t.Setenv("MOVIES_PATH", filepath.Join(root, "Movies"))
+	t.Setenv("TVSHOW_PATH", filepath.Join(root, "TV"))
+	configureLibraryPaths()
 	os.Mkdir(MoviesPath, 0700)
 	os.Mkdir(TVShowPath, 0700)
 	t.Cleanup(func() { MoviesPath, TVShowPath = oldMovies, oldTV })

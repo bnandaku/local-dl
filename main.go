@@ -300,10 +300,14 @@ func parseMovieInfo(filename string) MovieInfo {
 	return info
 }
 
+func configureLibraryPaths() {
+	MoviesPath = musicEnv("MOVIES_PATH", "/mnt/movies")
+	TVShowPath = musicEnv("TVSHOW_PATH", "/mnt/tvshows")
+}
+
 func main() {
+	configureLibraryPaths()
 	if len(os.Args) == 3 && os.Args[1] == "repair-file" {
-		MoviesPath = "/mnt/movies"
-		TVShowPath = "/mnt/tvshows"
 		if err := repairLibraryFile(os.Args[2]); err != nil {
 			log.Fatal(err)
 		}
@@ -312,8 +316,6 @@ func main() {
 	logMessage(LogLevelInfo, "Main", "=== Local Plex Download Manager Starting ===")
 
 	CurrentJobs = make(map[string]*Item)
-	MoviesPath = "/mnt/movies"
-	TVShowPath = "/mnt/tvshows"
 	PORT = "8080"
 	RemoteServer = os.Getenv("REMOTE_SERVER")
 	if RemoteServer == "" {

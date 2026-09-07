@@ -14,10 +14,13 @@ import (
 func realRARTool(t *testing.T) string {
 	t.Helper()
 	name := os.Getenv("UNRAR_TEST_TOOL")
+	var p string
+	var e error
 	if name == "" {
-		name = "unrar"
+		p, e = findMediaTool("unrar")
+	} else {
+		p, e = exec.LookPath(name)
 	}
-	p, e := exec.LookPath(name)
 	if e != nil {
 		t.Skip("install unrar or set UNRAR_TEST_TOOL to run real archive fixtures")
 	}
