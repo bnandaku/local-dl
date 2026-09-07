@@ -29,5 +29,10 @@ func recoveryStatus(c *gin.Context) {
 		c.JSON(503, gin.H{"error": "recovery feedback unreadable; preserved for repair"})
 		return
 	}
-	c.JSON(200, gin.H{"monitor": state, "pending_file_feedback": feedback, "unidentified_action": "Identify the title and media type, check the library, then create a legacy recovery request. No source URL is inferred."})
+	archives, archiveErr := loadArchiveState()
+	archiveError := ""
+	if archiveErr != nil {
+		archiveError = "Archive state unreadable; preserved for repair"
+	}
+	c.JSON(200, gin.H{"archives": archives, "archive_error": archiveError, "monitor": state, "pending_file_feedback": feedback, "unidentified_action": "Identify the title and media type, check the library, then create a legacy recovery request. No source URL is inferred."})
 }

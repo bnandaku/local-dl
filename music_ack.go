@@ -106,6 +106,7 @@ func InitMusicIngest(ctx context.Context) {
 	go runLinkFeedback(ctx)
 	if os.Getenv("BOT_SERVICE_TOKEN") != "" {
 		go runRecoveryMonitor(ctx)
+		go runArchiveWorker(ctx)
 	}
 	go func() {
 		ticker := time.NewTicker(time.Minute)

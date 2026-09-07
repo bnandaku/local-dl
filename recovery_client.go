@@ -203,6 +203,27 @@ func retryRecoveryRequest(group string) error {
 	default:
 		return fmt.Errorf("unknown recovery request state")
 	}
+	// The archive worker owns volume cleanup. Other recovery loops must not
+	// reserve another candidate while an archive rejection is still being discarded.
+	for _, a := range state.Attempts {
+		if a.Status != "bad" && a.Status != "failed" {
+			continue
+		}
+		var files struct {
+			Items []recoveryFile `json:"items"`
+		}
+		if _, e := botLinkCall("GET", fmt.Sprintf("/api/v1/links/%d/files", a.ID), nil, &files); e != nil {
+			return e
+		}
+		if files.Items == nil {
+			return fmt.Errorf("invalid attempt manifest during retry")
+		}
+		for _, f := range files.Items {
+			if isRARVolume(f.Name) && f.Cleanup == "pending" {
+				return fmt.Errorf("archive source cleanup is pending; replacement retained")
+			}
+		}
+	}
 	var out recoveryRequest
 	_, e := botLinkCall("POST", "/api/v1/recovery/requests/"+group+"/retry", map[string]interface{}{}, &out)
 	if e == nil && out.ID != group {

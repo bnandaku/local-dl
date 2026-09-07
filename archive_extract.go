@@ -89,7 +89,9 @@ func archiveCommandError(ctx context.Context, op string, err error) error {
 		// unrar: 3=CRC, 10=no files, 11=wrong password, 12=read error.
 		// Exit 2 is ambiguous (fatal/tool/storage); preserve rather than blacklist.
 		switch ex.ExitCode() {
-		case 3, 10, 11:
+		case 11:
+			return archiveFailure(archiveIntrinsic, "password", fmt.Errorf("password protected archive"))
+		case 3, 10:
 			return archiveFailure(archiveIntrinsic, op, fmt.Errorf("unrar exit %d", ex.ExitCode()))
 		}
 	}
@@ -150,6 +152,9 @@ func extractRAR(ctx context.Context, volumes []string, destination string, limit
 		}
 		// Missing supplied final volumes are intrinsic only after the declared set was downloaded.
 		text := strings.ToLower(output.String())
+		if ctx.Err() == nil && strings.Contains(text, "password is incorrect") {
+			return nil, archiveFailure(archiveIntrinsic, "password", errors.New("password protected archive"))
+		}
 		if ctx.Err() == nil && (strings.Contains(text, "next volume is required") || strings.Contains(text, "checksum error") || strings.Contains(text, "password is incorrect")) {
 			return nil, archiveFailure(archiveIntrinsic, "integrity", errors.New("archive integrity test failed"))
 		}
@@ -214,7 +219,7 @@ func extractRAR(ctx context.Context, volumes []string, destination string, limit
 		result = append(result, target)
 	}
 	if len(result) == 0 {
-		return nil, archiveFailure(archiveIntrinsic, "extract", errors.New("archive contains no files"))
+		return nil, archiveFailure(archiveIntrinsic, "no_media", errors.New("archive contains no files"))
 	}
 	return result, nil
 }
@@ -359,11 +364,11 @@ func parseRARListing(data []byte, limits archiveLimits) ([]archiveEntry, error) 
 	}
 	for _, incomplete := range pending {
 		if incomplete {
-			return nil, invalid("archive volume set is incomplete")
+			return nil, archiveFailure(archiveIntrinsic, "volumes", errors.New("archive volume set is incomplete"))
 		}
 	}
 	if len(entries) == 0 {
-		return nil, invalid("archive contains no entries")
+		return nil, archiveFailure(archiveIntrinsic, "no_media", errors.New("archive contains no entries"))
 	}
 	return entries, nil
 }
