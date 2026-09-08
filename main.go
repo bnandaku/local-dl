@@ -174,7 +174,14 @@ func parseTVShowInfo(filename string) TVShowInfo {
 
 	// Find where the episode pattern ends
 	if matches != nil && len(matches) > 1 {
-		afterPattern := filenameWithoutExt[matches[1]:]
+		// Some patterns consume the delimiter immediately after the episode
+		// number (for example the dot before an extension). The match indices
+		// refer to the original filename, while this value has no extension.
+		patternEnd := matches[1]
+		if patternEnd > len(filenameWithoutExt) {
+			patternEnd = len(filenameWithoutExt)
+		}
+		afterPattern := filenameWithoutExt[patternEnd:]
 		// Clean up quality info
 		afterPattern = strings.TrimPrefix(afterPattern, ".")
 		afterPattern = strings.TrimPrefix(afterPattern, "-")
