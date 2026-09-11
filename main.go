@@ -398,6 +398,15 @@ func (i *Item) StartDownload() error {
 	if e := checkDownloadBlacklist(i); e != nil {
 		return e
 	}
+	// Put.io releases often contain samples, screenshots, subtitles and other
+	// support files. They are optional and must not enter the primary download
+	// retry loop when their stale file IDs disappear after a collection move.
+	if isOptionalRecoveryItem(i.Name) {
+		if os.Getenv("BOT_SERVICE_TOKEN") != "" {
+			_ = queueLinkFeedback(i, "skipped", "supporting_file")
+		}
+		return nil
+	}
 	logMessage(LogLevelInfo, "Download", "Starting download for: %s (Type: %s)", i.Name, i.Type)
 	i.Started = true
 
@@ -408,6 +417,14 @@ func (i *Item) StartDownload() error {
 		return i.downloadMusic()
 	}
 	return i.downloadMedia()
+}
+
+func isOptionalRecoveryItem(name string) bool {
+	lower := strings.ToLower(filepath.Base(name))
+	if mediaKind(name) == "art" || mediaKind(name) == "subtitle" {
+		return true
+	}
+	return strings.Contains(lower, "sample") || strings.Contains(lower, "screenshot") || strings.Contains(lower, "preview")
 }
 
 func update(name string) {
